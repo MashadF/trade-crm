@@ -203,7 +203,7 @@ grant insert (business_id, name, phone, email, address, service, message, sms_ok
 
 -- businesses
 drop policy if exists biz_select on public.businesses;
-create policy biz_select on public.businesses for select to authenticated using (public.is_member(id));
+create policy biz_select on public.businesses for select to authenticated using (owner_id = auth.uid() or public.is_member(id));
 drop policy if exists biz_insert on public.businesses;
 create policy biz_insert on public.businesses for insert to authenticated
   with check (owner_id = auth.uid() and not public.has_business());
