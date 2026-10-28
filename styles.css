@@ -295,3 +295,33 @@ select.input.sm-select{width:auto;min-height:34px;padding:5px 30px 5px 10px;font
 .install-grid>div{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
 .steps{margin:0;padding-left:20px;font-size:14px}.steps li{margin:3px 0}
 .ok-chip{background:#dcfce7;color:#166534;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600}
+
+/* v2.2 phone fixes (Money page glitch + Settings tab vanishing).
+   Root cause: the 6-column Money table was wider than a phone screen, so the whole page grew
+   sideways; phone browsers then zoomed out / scrolled sideways and the fixed bottom tab bar
+   (with Settings on the far right) slid off the visible screen. */
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.view{min-width:0}
+.view>*{max-width:100%}
+.doc-list .list-item{align-items:flex-start;padding:12px 2px}
+.doc-list .right{text-align:right}
+.doc-chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.doc-chips .age{margin-left:0}
+/* iPhone zooms in on any focused field under 16px and stays zoomed, which also pushes the tab bar off-screen */
+@media (max-width:899px){
+  .input,select.input,textarea.input,.items .input,input,select,textarea{font-size:16px}
+}
+/* quote/invoice line items: stack on phones instead of squeezing the description box */
+@media (max-width:600px){
+  .items thead{display:none}
+  .items,.items tbody{display:block}
+  .items tr{display:grid;grid-template-columns:1fr 1fr auto auto;gap:6px 8px;align-items:end;padding:10px 0;border-bottom:1px solid var(--line)}
+  .items td{display:block;padding:0;width:auto}
+  .items td.desc{grid-column:1/-1}
+  .items .qty,.items .price,.items .num{width:auto}
+  .items td[data-label]::before{content:attr(data-label);display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:3px}
+  .items td.amt{align-self:center;padding-top:16px;min-width:76px}
+  .items td.rm{align-self:center;padding-top:16px}
+}
+.modal{max-height:92dvh}
+.auth-wrap{min-height:calc(100dvh - 40px)}

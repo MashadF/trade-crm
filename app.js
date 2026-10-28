@@ -402,7 +402,7 @@
             </div>`).join('') : '<div class="empty small">No jobs yet. Add one to keep notes and before/after photos.</div>'}
           </div>
           <div class="card"><div class="card-head"><h2>Quotes & invoices</h2><div class="row"><a class="btn sm" href="#/doc/new-quote?c=${h(id)}">+ Quote</a><a class="btn sm" href="#/doc/new-invoice?c=${h(id)}">+ Invoice</a></div></div>
-            ${docs.length ? `<table class="ctable"><tbody>${docs.map(d => `<tr data-doc="${h(d.id)}"><td><b>${h(d.number)}</b> <span class="muted small">${d.kind === 'quote' ? 'Quote' : 'Invoice'}</span></td><td>${fmtDate(d.created_at)}</td><td>${statusChip(d.status)}</td><td class="num">${money(L.docTotals(d).total)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty small">None yet.</div>'}
+            ${docs.length ? `<div class="table-wrap"><table class="ctable"><tbody>${docs.map(d => `<tr data-doc="${h(d.id)}"><td><b>${h(d.number)}</b> <span class="muted small">${d.kind === 'quote' ? 'Quote' : 'Invoice'}</span></td><td>${fmtDate(d.created_at)}</td><td>${statusChip(d.status)}</td><td class="num">${money(L.docTotals(d).total)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty small">None yet.</div>'}
           </div>
           <div class="card"><div class="card-head"><h2>Tasks</h2><button class="btn sm" id="addT">+ Task</button></div>${tasks.length ? tasks.map(taskRow).join('') : '<div class="empty small">No open tasks.</div>'}</div>
         </div>
@@ -481,6 +481,8 @@
     const st = L.stats(S);
     const docs = S.documents.filter(d => d.kind === moneyTab).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const owedList = S.documents.filter(d => L.amountOwed(d) > 0);
+    const rows = docs.map(d => { const age = d.status === 'sent' && d.sent_at ? Math.floor((Date.now() - new Date(d.sent_at)) / 86400000) : 0;
+      return { d, t: L.docTotals(d), flag: age >= (d.kind === 'quote' ? 3 : 7) ? ` <span class="age age-amber">${age} days</span>` : '' }; });
     view.innerHTML = `
       <div class="page-head"><div><h1>Money</h1><div class="muted small">Quotes, invoices and who owes you</div></div>
         <div class="row"><a class="btn" href="#/doc/new-invoice">+ Invoice</a><a class="btn primary" href="#/doc/new-quote">+ Quote</a></div></div>
@@ -492,15 +494,19 @@
       </div>
       <div class="card">
         <div class="card-head"><div class="seg" id="seg"><button data-t="quote" class="${moneyTab === 'quote' ? 'on' : ''}">Quotes</button><button data-t="invoice" class="${moneyTab === 'invoice' ? 'on' : ''}">Invoices</button></div></div>
-        ${docs.length ? `<table class="ctable"><thead><tr><th>#</th><th>Customer</th><th>Date</th><th>Status</th><th class="num">Total</th><th class="num">${moneyTab === 'invoice' ? 'Balance' : 'Deposit'}</th></tr></thead><tbody>
-          ${docs.map(d => { const t = L.docTotals(d); const age = d.status === 'sent' && d.sent_at ? Math.floor((Date.now() - new Date(d.sent_at)) / 86400000) : 0;
-            return `<tr data-doc="${h(d.id)}"><td><b>${h(d.number)}</b></td><td>${h(custName(d.customer_id) || '—')}</td><td>${fmtDate(d.sent_at || d.created_at)}</td>
-              <td>${statusChip(d.status)}${age >= (d.kind === 'quote' ? 3 : 7) ? ` <span class="age age-amber">${age} days</span>` : ''}${d.accepted_name ? ` <span class="small muted">by ${h(d.accepted_name)}</span>` : ''}</td>
-              <td class="num">${money(t.total)}</td><td class="num">${moneyTab === 'invoice' ? money(t.balance) : (t.deposit ? money(t.deposit) : '—')}</td></tr>`; }).join('')}
-        </tbody></table>` : `<div class="empty">No ${moneyTab}s yet.</div>`}
+        ${docs.length ? `<div class="only-desk table-wrap"><table class="ctable"><thead><tr><th>#</th><th>Customer</th><th>Date</th><th>Status</th><th class="num">Total</th><th class="num">${moneyTab === 'invoice' ? 'Balance' : 'Deposit'}</th></tr></thead><tbody>
+          ${rows.map(({ d, t, flag }) => `<tr data-doc="${h(d.id)}"><td><b>${h(d.number)}</b></td><td>${h(custName(d.customer_id) || '—')}</td><td>${fmtDate(d.sent_at || d.created_at)}</td>
+              <td>${statusChip(d.status)}${flag}${d.accepted_name ? ` <span class="small muted">by ${h(d.accepted_name)}</span>` : ''}</td>
+              <td class="num">${money(t.total)}</td><td class="num">${moneyTab === 'invoice' ? money(t.balance) : (t.deposit ? money(t.deposit) : '—')}</td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="only-phone list doc-list">${rows.map(({ d, t, flag }) => `<div class="list-item" data-doc="${h(d.id)}" role="link" tabindex="0">
+            <div class="li-main"><div class="li-title">${h(custName(d.customer_id) || '—')}</div>
+              <div class="li-sub">${h(d.number)} · ${fmtDate(d.sent_at || d.created_at)}</div>
+              <div class="doc-chips">${statusChip(d.status)}${flag}</div></div>
+            <div class="right"><div class="strong">${money(t.total)}</div><div class="small muted">${moneyTab === 'invoice' ? (t.balance ? money(t.balance) + ' due' : 'Nothing due') : (t.deposit ? money(t.deposit) + ' deposit' : '')}</div></div></div>`).join('')}</div>` : `<div class="empty">No ${moneyTab}s yet.</div>`}
       </div>`;
-    $$('#seg button').forEach(b => b.onclick = () => { moneyTab = b.dataset.t; renderMoney(); });
-    $$('[data-doc]').forEach(r => r.onclick = () => { location.hash = '#/doc/' + r.dataset.doc; });
+    $$('#seg button').forEach(b => b.onclick = () => { if (moneyTab === b.dataset.t) return; moneyTab = b.dataset.t; renderMoney(); });
+    $$('[data-doc]').forEach(r => { r.onclick = () => { location.hash = '#/doc/' + r.dataset.doc; }; r.onkeydown = e => { if (e.key === 'Enter') r.onclick(); }; });
   }
 
   let draft = null;
@@ -534,10 +540,10 @@
               <div class="field"><label>Status</label><select class="input" id="status">${L.DOC_STATUSES.filter(s => isQ || s !== 'accepted').map(s => `<option value="${s}" ${s === d.status ? 'selected' : ''}>${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}</select></div>
             </div>
             <table class="items"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Price</th><th class="num">Amount</th><th></th></tr></thead><tbody>
-              ${d.items.map((it, i) => `<tr><td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" placeholder="What you'll do"></td>
-                <td class="qty"><input class="input" type="number" min="0" step="any" data-i="${i}" data-k="qty" value="${h(it.qty)}"></td>
-                <td class="price"><input class="input" type="number" min="0" step="0.01" data-i="${i}" data-k="price" value="${h(it.price)}"></td>
-                <td class="num" data-amt="${i}">${money((Number(it.qty) || 0) * (Number(it.price) || 0))}</td><td><button class="icon-btn" data-rm="${i}" aria-label="Remove line">✕</button></td></tr>`).join('')}
+              ${d.items.map((it, i) => `<tr><td class="desc"><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" placeholder="What you'll do" aria-label="Description"></td>
+                <td class="qty" data-label="Qty"><input class="input" type="number" inputmode="decimal" min="0" step="any" data-i="${i}" data-k="qty" value="${h(it.qty)}" aria-label="Quantity"></td>
+                <td class="price" data-label="Price"><input class="input" type="number" inputmode="decimal" min="0" step="0.01" data-i="${i}" data-k="price" value="${h(it.price)}" aria-label="Price"></td>
+                <td class="num amt" data-amt="${i}">${money((Number(it.qty) || 0) * (Number(it.price) || 0))}</td><td class="rm"><button class="icon-btn" data-rm="${i}" aria-label="Remove line">✕</button></td></tr>`).join('')}
             </tbody></table>
             <button class="btn sm" id="addLine">+ Add line</button>
             <div class="grid-3f mt">
