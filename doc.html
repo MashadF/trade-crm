@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Quote / Invoice</title>
+<style>
+  :root{--accent:#2563eb}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#f1f5f9;color:#0f172a}
+  .sheet{max-width:780px;margin:24px auto;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(15,23,42,.08);overflow:hidden}
+  .band{height:8px;background:var(--accent)}
+  .inner{padding:28px 32px}
+  .top{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  .biz{font-size:22px;font-weight:800}
+  .muted{color:#64748b}.small{font-size:13px}
+  .kind{text-align:right}
+  .kind h1{margin:0;font-size:26px;letter-spacing:.02em;color:var(--accent);text-transform:uppercase}
+  .status{display:inline-block;margin-top:6px;font-size:12px;font-weight:700;padding:3px 10px;border-radius:99px;background:#f1f5f9;text-transform:uppercase;letter-spacing:.04em}
+  .status.accepted{background:#dcfce7;color:#166534}.status.paid{background:#16a34a;color:#fff}.status.sent{background:#fef3c7;color:#92400e}
+  .meta{display:flex;gap:40px;margin:26px 0 18px;flex-wrap:wrap}
+  .meta h4{margin:0 0 4px;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:#64748b}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;text-align:left;border-bottom:2px solid #e2e8f0;padding:8px 6px}
+  td{padding:10px 6px;border-bottom:1px solid #eef2f7;vertical-align:top}
+  .r{text-align:right;white-space:nowrap}
+  .totals{margin-left:auto;width:min(320px,100%);margin-top:14px}
+  .totals div{display:flex;justify-content:space-between;padding:5px 6px}
+  .totals .grand{border-top:2px solid #0f172a;font-weight:800;font-size:19px;margin-top:4px;padding-top:9px}
+  .totals .due{background:color-mix(in srgb,var(--accent) 10%,white);border-radius:8px;font-weight:700}
+  .notes{margin-top:22px;padding:12px 14px;background:#f8fafc;border-radius:10px;white-space:pre-wrap;font-size:14px}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:12px 18px;border-radius:12px;font-weight:700;border:1px solid #cbd5e1;background:#fff;color:#0f172a;cursor:pointer;text-decoration:none;font-size:15px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .accept{margin-top:26px;border:2px solid var(--accent);border-radius:14px;padding:18px}
+  .accept h3{margin:0 0 6px}
+  .accept input[type=text]{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font:inherit;margin:8px 0}
+  .rec{margin-top:22px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px}
+  .err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:10px;margin-top:8px}
+  .foot{border-top:1px solid #e2e8f0;padding:14px 32px;font-size:12.5px;color:#64748b;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .center{text-align:center;padding:60px 20px}
+  @media (max-width:600px){.inner{padding:20px}.sheet{margin:0;border-radius:0}.kind{text-align:left}}
+  @media print{body{background:#fff}.sheet{box-shadow:none;margin:0;max-width:none}.no-print{display:none!important}.band{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+<div class="sheet" id="sheet"><div class="center muted">Loading…</div></div>
+<script src="config.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/store.js"></script>
+<script>
+(async function () {
+  const L = CRMLogic, ST = CRMStore, CFG = window.CRM_CONFIG || {}, h = L.esc, money = L.money;
+  const token = new URLSearchParams(location.search).get('t') || '';
+  const sheet = document.getElementById('sheet');
+  const fail = msg => { sheet.innerHTML = `<div class="center"><h2>Not available</h2><p class="muted">${h(msg)}</p></div>`; };
+  if (!/^[0-9a-f-]{36}$/i.test(token)) return fail('This link is incomplete. Ask the business to send it again.');
+  const check = L.checkConfig(CFG);
+  let client = null, demo = null;
+  if (check.mode === 'cloud' && check.ok) {
+    await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/supabase.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); }).catch(() => {});
+    if (typeof supabase === 'undefined') return fail('Could not load. Check your connection and try again.');
+    client = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: false } });
+  } else { demo = ST.DemoStore(); await demo.init(); }
+
+  async function load() {
+    if (client) return ST.getPublicDocument(client, token);
+    const d = demo.findDocByToken(token); if (!d || d.status === 'draft') return null;
+    const c = demo.state.customers.find(x => x.id === d.customer_id) || {};
+    return { doc: d, business: demo.business, customer: { name: c.name, address: c.address } };
+  }
+  async function accept(name) {
+    if (client) return ST.acceptPublicQuote(client, token, name);
+    const d = demo.findDocByToken(token); if (d.kind !== 'quote' || d.status !== 'sent') throw new Error('This quote is not open for acceptance.');
+    await demo.update('documents', d.id, { status: 'accepted', accepted_name: name, accepted_at: new Date().toISOString(), accepted_via: 'Customer typed name on share link' });
+    return load();
+  }
+  function render(data) {
+    const d = data.doc, b = data.business || {}, c = data.customer || {}, t = L.docTotals(d), isQ = d.kind === 'quote';
+    document.documentElement.style.setProperty('--accent', /^#[0-9a-f]{6}$/i.test(b.accent || '') ? b.accent : '#2563eb');
+    document.title = `${isQ ? 'Quote' : 'Invoice'} ${d.number} · ${b.name || ''}`;
+    const pay = L.safePayLink(d.pay_link);
+    const canAccept = isQ && d.status === 'sent';
+    sheet.innerHTML = `<div class="band"></div><div class="inner">
+      <div class="top"><div><div class="biz">${h(b.name)}</div><div class="muted small">${[b.phone, b.email].filter(Boolean).map(h).join(' · ')}${b.postal_address ? '<br>' + h(b.postal_address) : ''}</div></div>
+        <div class="kind"><h1>${isQ ? 'Quote' : 'Invoice'}</h1><div class="muted">${h(d.number)}</div><span class="status ${h(d.status)}">${h(d.status)}</span></div></div>
+      <div class="meta"><div><h4>${isQ ? 'Prepared for' : 'Bill to'}</h4><div><b>${h(c.name || '')}</b></div><div class="muted small">${h(c.address || '')}</div></div>
+        <div><h4>Date</h4><div>${h(L.isoDate(d.sent_at || d.created_at))}</div></div>
+        ${d.due_date ? `<div><h4>${isQ ? 'Valid until' : 'Due'}</h4><div>${h(d.due_date)}</div></div>` : ''}</div>
+      <table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Amount</th></tr></thead><tbody>
+        ${(d.items || []).map(it => `<tr><td>${h(it.desc)}</td><td class="r">${h(it.qty)}</td><td class="r">${money(it.price)}</td><td class="r">${money((Number(it.qty) || 0) * (Number(it.price) || 0))}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="totals"><div><span>Subtotal</span><span>${money(t.subtotal)}</span></div>${t.tax ? `<div><span>Tax (${t.rate}%)</span><span>${money(t.tax)}</span></div>` : ''}
+        <div class="grand"><span>Total</span><span>${money(t.total)}</span></div>
+        ${t.deposit ? `<div><span>${isQ ? 'Deposit to get started' : 'Deposit received'}</span><span>${money(t.deposit)}</span></div>` : ''}
+        ${!isQ ? `<div class="due"><span>${t.paid ? 'Paid in full' : 'Amount due'}</span><span>${money(t.balance)}</span></div>` : ''}</div>
+      ${d.notes ? `<div class="notes">${h(d.notes)}</div>` : ''}
+      ${d.accepted_at ? `<div class="rec"><b>✔ Accepted by ${h(d.accepted_name)}</b> on ${h(new Date(d.accepted_at).toLocaleString('en-US'))}<div class="small muted">${h(d.accepted_via || '')}. This is a record that the customer typed their name to accept. It is not a legal e-signature.</div></div>` : ''}
+      ${canAccept ? `<form class="accept no-print" id="acc"><h3>Accept this quote</h3><div class="small muted">Type your full name to accept. We save your name with the date and time as an acceptance record (not a legal e-signature).</div>
+        <input type="text" name="n" required minlength="2" maxlength="120" placeholder="Your full name" autocomplete="name">
+        <label class="small"><input type="checkbox" required> I accept this quote for ${money(t.total)}.</label><div><button class="btn primary" style="margin-top:10px">Accept quote</button></div><div class="err" id="err" hidden></div></form>` : ''}
+      <div class="actions no-print">
+        ${pay && d.status !== 'paid' ? `<a class="btn primary" href="${h(pay)}" target="_blank" rel="noopener noreferrer">💳 ${isQ ? (t.deposit ? 'Pay deposit ' + money(t.deposit) : 'Pay now') : 'Pay ' + money(t.balance)}</a>` : ''}
+        <button class="btn" onclick="window.print()">🖨 Print / Save PDF</button>
+        ${b.phone ? `<a class="btn" href="${h(L.telLink(b.phone))}">📞 Call ${h(b.name)}</a>` : ''}
+      </div></div>
+      <div class="foot"><span>${h(b.name)}${b.postal_address ? ' · ' + h(b.postal_address) : ''}</span><span>${pay ? 'Payments are handled by your payment provider; this page never sees card details.' : ''}</span></div>`;
+    const f = document.getElementById('acc');
+    if (f) f.onsubmit = async e => { e.preventDefault(); const btn = f.querySelector('button'); btn.disabled = true;
+      try { render(await accept(f.elements.n.value.trim())); } catch (ex) { const er = document.getElementById('err'); er.hidden = false; er.textContent = ex.message; btn.disabled = false; } };
+  }
+  try { const data = await load(); if (!data) return fail('This quote or invoice was not found, or it has not been sent yet.'); render(data); }
+  catch (e) { fail('Could not load: ' + e.message); }
+})();
+</script>
+</body>
+</html>

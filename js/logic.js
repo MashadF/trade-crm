@@ -1,0 +1,262 @@
+/* Trade CRM v2: pure business logic (no DOM, no network). Works in the browser (window.CRMLogic) and Node (require). */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.CRMLogic = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+  const DAY = 86400000;
+  const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const pad = n => String(n).padStart(2, '0');
+  const isoDate = d => { d = new Date(d); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const addDays = (d, n) => new Date(new Date(d).getTime() + n * DAY);
+  const parseDay = s => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
+  const money = n => (Number(n) || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+  const LEAD_STATUSES = [
+    { id: 'new', name: 'New' }, { id: 'contacted', name: 'Contacted' }, { id: 'quote', name: 'Quote sent' },
+    { id: 'won', name: 'Won' }, { id: 'lost', name: 'Lost' }];
+  const DOC_STATUSES = ['draft', 'sent', 'accepted', 'paid'];
+
+  /* ---------- quotes & invoices ---------- */
+  function docTotals(doc) {
+    const items = Array.isArray(doc && doc.items) ? doc.items : [];
+    const subtotal = round2(items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0));
+    const rate = Math.max(0, Number(doc && doc.tax_rate) || 0);
+    const tax = round2(subtotal * rate / 100);
+    const total = round2(subtotal + tax);
+    const deposit = Math.min(round2(doc && doc.deposit), total);
+    const paid = doc && doc.status === 'paid';
+    const balance = paid ? 0 : round2(total - deposit);
+    return { subtotal, rate, tax, total, deposit, balance, paid };
+  }
+  /* Amount still owed on an invoice (not counting drafts). */
+  function amountOwed(doc) {
+    if (!doc || doc.kind !== 'invoice' || doc.status === 'draft' || doc.status === 'paid' || doc.status === 'void') return 0;
+    return docTotals(doc).total;
+  }
+  function nextNumber(docs, kind) {
+    const prefix = kind === 'invoice' ? 'INV-' : 'Q-';
+    let max = 1000;
+    (docs || []).filter(d => d.kind === kind).forEach(d => { const n = parseInt(String(d.number).replace(/\D/g, ''), 10); if (n > max) max = n; });
+    return prefix + (max + 1);
+  }
+  function quoteToInvoice(quote, docs, now) {
+    return {
+      kind: 'invoice', number: nextNumber(docs, 'invoice'), status: 'draft', customer_id: quote.customer_id,
+      items: JSON.parse(JSON.stringify(quote.items || [])), tax_rate: quote.tax_rate, deposit: quote.deposit,
+      pay_link: quote.pay_link || '', notes: quote.notes || '', due_date: isoDate(addDays(now || new Date(), 7)),
+      from_quote_id: quote.id
+    };
+  }
+  function safePayLink(url) {
+    url = String(url || '').trim();
+    return /^https:\/\/[^\s"'<>]+$/i.test(url) ? url : '';
+  }
+
+  /* ---------- leads: "no reply yet" badge ---------- */
+  function leadAge(lead, now) {
+    now = now ? new Date(now) : new Date();
+    if (!lead || lead.status !== 'new' || lead.contacted_at) return { level: 'none', minutes: 0, label: '' };
+    const minutes = Math.max(0, Math.floor((now - new Date(lead.created_at)) / 60000));
+    const span = minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.floor(minutes / 60)} hr` : `${Math.floor(minutes / 1440)} d`;
+    if (minutes >= 60) return { level: 'red', minutes, label: `No reply yet · ${span}` };
+    if (minutes >= 15) return { level: 'amber', minutes, label: `No reply yet · ${span}` };
+    return { level: 'fresh', minutes, label: `New · ${span}` };
+  }
+
+  /* ---------- automatic reminder tasks ---------- */
+  // Returns task objects that should exist but don't yet (dedupe by auto_key, including done ones).
+  function generateAutoTasks(state, now) {
+    now = now ? new Date(now) : new Date();
+    const today = parseDay(isoDate(now));
+    const have = new Set((state.tasks || []).map(t => t.auto_key).filter(Boolean));
+    const custName = id => ((state.customers || []).find(c => c.id === id) || {}).name || 'customer';
+    const out = [];
+    const add = t => { if (!have.has(t.auto_key)) { have.add(t.auto_key); out.push(t); } };
+    (state.documents || []).forEach(d => {
+      if (!d.sent_at) return;
+      const sent = new Date(d.sent_at);
+      if (d.kind === 'quote' && d.status === 'sent' && now - sent >= 3 * DAY)
+        add({ auto_key: `quote:${d.id}:3d`, title: `Follow up on quote ${d.number} for ${custName(d.customer_id)} (${money(docTotals(d).total)})`, due: isoDate(addDays(sent, 3)), customer_id: d.customer_id || null, done: false });
+      if (d.kind === 'invoice' && d.status === 'sent' && now - sent >= 7 * DAY)
+        add({ auto_key: `invoice:${d.id}:7d`, title: `Invoice ${d.number} unpaid 7+ days: ${custName(d.customer_id)} owes ${money(docTotals(d).total)}`, due: isoDate(addDays(sent, 7)), customer_id: d.customer_id || null, done: false });
+    });
+    (state.customers || []).forEach(c => {
+      if (!c.next_service_due) return;
+      const due = parseDay(c.next_service_due);
+      if (due - today <= 7 * DAY)
+        add({ auto_key: `service:${c.id}:${String(c.next_service_due).slice(0, 10)}`, title: `Service due for ${c.name}: book the next visit`, due: String(c.next_service_due).slice(0, 10), customer_id: c.id, done: false });
+    });
+    return out;
+  }
+  // Open automatic tasks whose reason went away (quote accepted, invoice paid, service date moved).
+  function obsoleteAutoTasks(state) {
+    const docs = new Map((state.documents || []).map(d => [d.id, d]));
+    const custs = new Map((state.customers || []).map(c => [c.id, c]));
+    return (state.tasks || []).filter(t => {
+      if (!t.auto_key || t.done) return false;
+      const [kind, id, extra] = t.auto_key.split(':');
+      if (kind === 'quote' || kind === 'invoice') { const d = docs.get(id); return !d || d.status !== 'sent'; }
+      if (kind === 'service') { const c = custs.get(id); return !c || String(c.next_service_due || '').slice(0, 10) !== extra; }
+      return false;
+    });
+  }
+
+  /* ---------- dashboard numbers ---------- */
+  function stats(state, now) {
+    now = now ? new Date(now) : new Date();
+    const weekAgo = now - 7 * DAY, monthAgo = now - 30 * DAY;
+    const docs = state.documents || [];
+    const quotes30 = docs.filter(d => d.kind === 'quote' && d.status !== 'draft' && new Date(d.sent_at || d.created_at) >= monthAgo);
+    const won = quotes30.filter(d => d.status === 'accepted' || d.status === 'paid');
+    return {
+      newLeadsWeek: (state.leads || []).filter(l => new Date(l.created_at) >= weekAgo).length,
+      untouchedLeads: (state.leads || []).filter(l => leadAge(l, now).level === 'red' || leadAge(l, now).level === 'amber').length,
+      quotesSent30: quotes30.length,
+      quotesWon30: won.length,
+      quotesWonValue30: round2(won.reduce((s, d) => s + docTotals(d).total, 0)),
+      openQuotesValue: round2(docs.filter(d => d.kind === 'quote' && d.status === 'sent').reduce((s, d) => s + docTotals(d).total, 0)),
+      invoicesSent30: docs.filter(d => d.kind === 'invoice' && d.status !== 'draft' && new Date(d.sent_at || d.created_at) >= monthAgo).length,
+      moneyOwed: round2(docs.reduce((s, d) => s + amountOwed(d), 0)),
+      paid30: round2(docs.filter(d => d.kind === 'invoice' && d.status === 'paid' && new Date(d.paid_at || d.created_at) >= monthAgo).reduce((s, d) => s + docTotals(d).total, 0))
+    };
+  }
+
+  /* ---------- review requests, texting & email links ---------- */
+  const DEFAULT_TEMPLATES = {
+    review_sms: 'Hi {first}, thanks for choosing {business}! If you have a minute, a quick Google review helps a small local business a lot: {link}',
+    review_email: 'Hi {first},\n\nThank you for choosing {business}. If you were happy with the work, would you leave us a short Google review? It takes about a minute and really helps a small local business:\n{link}\n\nThank you!\n{business}',
+    review_followup: 'Hi {first}, just a friendly reminder from {business}: if you have a moment, we would really appreciate a quick review: {link} (this is our only reminder)'
+  };
+  const STOP_WORDS = ['STOP', 'STOPALL', 'QUIT', 'END', 'REVOKE', 'OPT OUT', 'OPTOUT', 'CANCEL', 'UNSUBSCRIBE'];
+  const isStopReply = text => STOP_WORDS.includes(String(text || '').trim().toUpperCase().replace(/[.!]+$/, ''));
+  const firstName = name => String(name || '').trim().split(/\s+/)[0] || 'there';
+  const fillTemplate = (tpl, vars) => String(tpl || '').replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m));
+  const digits = p => String(p || '').replace(/[^\d+]/g, '');
+
+  function smsLink(phone, body) { return `sms:${digits(phone)}?&body=${encodeURIComponent(body || '')}`; }
+  function mailtoLink(email, subject, body) {
+    return `mailto:${encodeURIComponent(String(email || '').trim()).replace(/%40/g, '@')}?subject=${encodeURIComponent(subject || '')}&body=${encodeURIComponent(body || '')}`;
+  }
+  function telLink(phone) { return `tel:${digits(phone)}`; }
+  function mapLink(address) { return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address || '')}`; }
+
+  // Can we message this customer on this channel? Returns {ok, reason, warn}
+  function contactCheck(customer, channel) {
+    if (!customer) return { ok: false, reason: 'No customer' };
+    if (customer.opted_out) return { ok: false, reason: 'Customer opted out (replied STOP or asked not to be contacted).' };
+    if (channel === 'sms' && !customer.phone) return { ok: false, reason: 'No phone number on file.' };
+    if (channel === 'email' && !customer.email) return { ok: false, reason: 'No email on file.' };
+    const consent = channel === 'sms' ? customer.sms_ok : customer.email_ok;
+    return { ok: true, warn: consent ? '' : `No ${channel === 'sms' ? 'text' : 'email'} consent recorded. Ask first, then tick it on the customer card.` };
+  }
+
+  function reviewRequest(business, customer, kind, channel) {
+    business = business || {}; kind = kind === 'followup' ? 'followup' : 'first';
+    const vars = { first: firstName(customer && customer.name), business: business.name || 'our team', link: business.google_review_link || '[add your Google review link in Settings]' };
+    const tpl = kind === 'followup' ? (business.review_followup || DEFAULT_TEMPLATES.review_followup)
+      : channel === 'email' ? (business.review_email || DEFAULT_TEMPLATES.review_email) : (business.review_sms || DEFAULT_TEMPLATES.review_sms);
+    let body = fillTemplate(tpl, vars);
+    const check = contactCheck(customer, channel);
+    if (channel === 'sms') {
+      body += ' Reply STOP to opt out.';
+      return { channel, kind, body, href: check.ok ? smsLink(customer.phone, body) : '', check, missingLink: !business.google_review_link };
+    }
+    const subject = kind === 'followup' ? `Quick reminder from ${vars.business}` : `Thanks from ${vars.business}`;
+    const footer = `\n\n--\n${vars.business}${business.postal_address ? '\n' + business.postal_address : ''}\nDon't want these emails? Reply "unsubscribe" and we won't email you again.`;
+    body += footer;
+    return { channel, kind, subject, body, href: check.ok ? mailtoLink(customer.email, subject, body) : '', check, missingLink: !business.google_review_link, missingAddress: !business.postal_address };
+  }
+  // Has a review been asked, and is a follow-up due (>= 3 days after the first, only one follow-up)?
+  function reviewStatus(requests, customerId, now) {
+    now = now ? new Date(now) : new Date();
+    const mine = (requests || []).filter(r => r.customer_id === customerId).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const first = mine.find(r => r.kind === 'first'), follow = mine.find(r => r.kind === 'followup');
+    return { asked: !!first, firstAt: first ? first.created_at : null, followedUp: !!follow, followupDue: !!first && !follow && now - new Date(first.created_at) >= 3 * DAY };
+  }
+
+  /* ---------- CSV ---------- */
+  function parseCSV(text) {
+    const rows = []; let row = [], f = '', q = false;
+    text = String(text || '').replace(/^\uFEFF/, '');
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (ch === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += ch; }
+      else if (ch === '"') q = true;
+      else if (ch === ',') { row.push(f); f = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+      else f += ch;
+    }
+    if (f !== '' || row.length) { row.push(f); rows.push(row); }
+    return rows.filter(r => r.some(c => c.trim() !== ''));
+  }
+  const csvCell = v => {
+    let s = Array.isArray(v) ? v.join(', ') : String(v == null ? '' : v);
+    if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s;   // stop spreadsheet formula injection
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const toCSV = (head, rows) => [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+  // Map a CSV (header row + rows) to customer objects. Recognises common column names.
+  function csvToCustomers(text) {
+    const rows = parseCSV(text); if (rows.length < 2) return [];
+    const head = rows[0].map(h => h.trim().toLowerCase());
+    const col = (...names) => head.findIndex(h => names.includes(h));
+    const ix = { name: col('name', 'full name', 'customer', 'contact'), phone: col('phone', 'mobile', 'cell', 'phone number'), email: col('email', 'e-mail', 'email address'),
+      address: col('address', 'street', 'service address'), source: col('source', 'lead source', 'how found'), tags: col('tags', 'tag'), notes: col('notes', 'note'), next: col('next service due', 'next_service_due', 'next service') };
+    return rows.slice(1).map(r => {
+      const g = k => (ix[k] >= 0 ? String(r[ix[k]] || '').trim().replace(/^'(?=[=+\-@])/, '') : '');
+      return { name: g('name'), phone: g('phone'), email: g('email'), address: g('address'), source: g('source'),
+        tags: g('tags') ? g('tags').split(/[;,]/).map(s => s.trim()).filter(Boolean) : [], notes: g('notes'),
+        next_service_due: /^\d{4}-\d{2}-\d{2}$/.test(g('next')) ? g('next') : null };
+    }).filter(c => c.name);
+  }
+
+  /* ---------- config / key safety ---------- */
+  function b64urlDecode(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '=';
+    if (typeof atob === 'function') return atob(s);
+    return Buffer.from(s, 'base64').toString('binary');
+  }
+  // Returns {ok, mode:'demo'|'cloud', error}. Refuses service_role / secret keys so they never get used in a browser.
+  function checkConfig(cfg) {
+    cfg = cfg || {};
+    const url = String(cfg.SUPABASE_URL || '').trim(), key = String(cfg.SUPABASE_ANON_KEY || '').trim();
+    if (!url && !key) return { ok: true, mode: 'demo' };
+    if (!url || !key) return { ok: false, mode: 'demo', error: 'config.js needs both SUPABASE_URL and SUPABASE_ANON_KEY (or leave both empty for Demo mode).' };
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url) && !/^https:\/\//i.test(url)) return { ok: false, mode: 'demo', error: 'SUPABASE_URL must start with https://' };
+    if (/^sb_secret_/i.test(key)) return { ok: false, mode: 'demo', error: 'That is a SECRET key. Never put it in config.js. Use the publishable/anon key.' };
+    if (/^eyJ/.test(key)) {
+      try {
+        const payload = JSON.parse(b64urlDecode(key.split('.')[1] || ''));
+        if (payload.role === 'service_role') return { ok: false, mode: 'demo', error: 'That is the service_role key. Never put it in config.js. Use the anon key.' };
+        if (payload.role !== 'anon') return { ok: false, mode: 'demo', error: 'Key role must be "anon".' };
+      } catch (e) { return { ok: false, mode: 'demo', error: 'Could not read the anon key. Copy it again from Supabase > Project Settings > API.' }; }
+    } else if (!/^sb_publishable_/i.test(key)) return { ok: false, mode: 'demo', error: 'Unrecognised key. Use the anon (eyJ...) or publishable (sb_publishable_...) key.' };
+    return { ok: true, mode: 'cloud' };
+  }
+
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // Validate + clean a public lead-form submission. Returns {ok, spam, lead, error}
+  function cleanLead(form, businessId) {
+    form = form || {};
+    if (String(form.website || '').trim() || String(form.company_fax || '').trim()) return { ok: true, spam: true };   // honeypot filled = bot
+    if (form.started_at && Date.now() - Number(form.started_at) < 2500) return { ok: true, spam: true };            // submitted faster than a human
+    const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+    const lead = { business_id: businessId, name: t(form.name, 200), phone: t(form.phone, 40), email: t(form.email, 200), address: t(form.address, 300), service: t(form.service, 200), message: t(form.message, 2000), sms_ok: form.sms_ok === true || form.sms_ok === 'on' || form.sms_ok === 'yes' };
+    if (!uuidRe.test(String(businessId || '')) && businessId !== 'demo') return { ok: false, error: 'This form is not set up yet (missing business id).' };
+    if (!lead.name) return { ok: false, error: 'Please enter your name.' };
+    if (!lead.phone && !lead.email) return { ok: false, error: 'Please enter a phone number or email so we can reply.' };
+    if (lead.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) return { ok: false, error: 'That email address looks incomplete.' };
+    if (lead.phone && digits(lead.phone).replace('+', '').length < 7) return { ok: false, error: 'That phone number looks too short.' };
+    Object.keys(lead).forEach(k => { if (lead[k] === '') delete lead[k]; });
+    if (!lead.phone) lead.sms_ok = false;
+    return { ok: true, spam: false, lead };
+  }
+
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  return { DAY, LEAD_STATUSES, DOC_STATUSES, DEFAULT_TEMPLATES, STOP_WORDS, round2, isoDate, addDays, parseDay, money, esc,
+    docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, generateAutoTasks, obsoleteAutoTasks, stats,
+    fillTemplate, firstName, isStopReply, smsLink, mailtoLink, telLink, mapLink, contactCheck, reviewRequest, reviewStatus,
+    parseCSV, csvCell, toCSV, csvToCustomers, checkConfig, cleanLead };
+});
