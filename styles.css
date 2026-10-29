@@ -325,3 +325,33 @@ select.input.sm-select{width:auto;min-height:34px;padding:5px 30px 5px 10px;font
 }
 .modal{max-height:92dvh}
 .auth-wrap{min-height:calc(100dvh - 40px)}
+
+/* v2.3.1 phone fixes (Leads page glitch + bottom menu vanishing).
+   Root cause: a long unbroken string in a lead (website URL pasted into the message, long email
+   or address) could not wrap, so the Leads page grew wider than the phone (1098px on a 360px
+   screen). Android/iOS then zoomed the whole page out and the fixed bottom menu slid off-screen.
+   Fix: let long text break anywhere, keep the right-hand column narrow, and clip any stray
+   sideways overflow at the page edge so the layout can never exceed the screen width. */
+html,body{max-width:100%;overflow-x:clip}
+@supports not (overflow-x:clip){html{overflow-x:hidden}}
+.view,.modal{overflow-wrap:break-word}
+.lead-msg,.li-sub,.kv dd,.job-notes,.tl-text,.notice,.msg-preview,.pre,.cust-card,.modal p,.modal-head h2,.ctable td,.items td,.lead .li-title{overflow-wrap:anywhere;min-width:0}
+.lead-top{min-width:0}
+.lead-top .right{flex:0 1 auto;max-width:38%;text-align:right;overflow-wrap:anywhere}
+.lead .li-title{white-space:normal}
+.modal{min-width:0;overflow-x:hidden}
+.modal-head{gap:10px;min-width:0}.modal-head h2{flex:1}
+.modal-head .icon-btn{flex:none}
+.card,.col,.field{min-width:0}
+.input{max-width:100%;min-width:0}
+.row>.btn,.row>select{flex:none}
+@media (max-width:899px){
+  .tabbar{width:100%;max-width:100vw}
+  .tabbar a{min-width:0}
+  .tabbar span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+/* the lead Status dropdown was 13px on phones (more specific rule beat the 16px one): tapping it zoomed iPhones in */
+@media (max-width:899px){select.input.sm-select,.sm-select{font-size:16px;min-height:36px}}
+/* when the browser scrolls a field or button into view (keyboard focus, find-in-page), keep it clear of the sticky top bar and bottom menu */
+html{scroll-padding-top:80px;scroll-padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+@media (min-width:900px){html{scroll-padding-bottom:16px}}
