@@ -53,15 +53,92 @@
     return /^https:\/\/[^\s"'<>]+$/i.test(url) ? url : '';
   }
 
-  /* ---------- leads: "no reply yet" badge ---------- */
+  /* ---------- leads: "not contacted yet" badge ---------- */
+  // Speed-to-lead timer for leads still marked New with no first contact. Levels (unchanged): fresh < 15 min,
+  // amber from 15 min, red from 1 hour (overdue). Prospects found by Rex/Webster (source starts with their name)
+  // never asked for a quote, so the 15-minute rule doesn't apply: they get a calm grey "prospect" badge.
+  const isProspect = lead => /^\s*(rex|webster)\b/i.test(String((lead && lead.source) || ''));
   function leadAge(lead, now) {
     now = now ? new Date(now) : new Date();
     if (!lead || lead.status !== 'new' || lead.contacted_at) return { level: 'none', minutes: 0, label: '' };
     const minutes = Math.max(0, Math.floor((now - new Date(lead.created_at)) / 60000));
-    const span = minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.floor(minutes / 60)} hr` : `${Math.floor(minutes / 1440)} d`;
-    if (minutes >= 60) return { level: 'red', minutes, label: `No reply yet · ${span}` };
-    if (minutes >= 15) return { level: 'amber', minutes, label: `No reply yet · ${span}` };
+    const span = minutes < 1 ? 'just now' : (minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.floor(minutes / 60)} hr` : `${Math.floor(minutes / 1440)} d`) + ' ago';
+    if (isProspect(lead)) return { level: 'prospect', minutes, label: `New, not contacted yet · ${span}` };
+    if (minutes >= 60) return { level: 'red', minutes, label: `Overdue, not contacted yet · ${span}` };
+    if (minutes >= 15) return { level: 'amber', minutes, label: `New, not contacted yet · ${span}` };
     return { level: 'fresh', minutes, label: `New · ${span}` };
+  }
+
+  /* ---------- lead notes: Rex / Webster prospect notes -> labeled lines (display only) ---------- */
+  // Split text into plain-text and link parts. Only http(s) URLs become links; everything else stays text.
+  function linkParts(text) {
+    text = String(text == null ? '' : text);
+    const out = [], re = /https?:\/\/[^\s<>"`]+/gi; let last = 0, m;
+    while ((m = re.exec(text))) {
+      let url = m[0];
+      while (/[.,;:!?]$/.test(url) || (url.endsWith(')') && (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length)) url = url.slice(0, -1);
+      const href = safeHttpUrl(url);
+      if (m.index > last) out.push({ text: text.slice(last, m.index) });
+      if (href) out.push({ text: shortUrl(href), href }); else out.push({ text: url });
+      last = m.index + url.length; re.lastIndex = last;
+    }
+    if (last < text.length) out.push({ text: text.slice(last) });
+    return out.reduce((a, p) => { const z = a[a.length - 1]; if (z && !z.href && !p.href) z.text += p.text; else a.push(p); return a; }, []);
+  }
+  function safeHttpUrl(url) {
+    try { const u = new URL(String(url).trim()); return (u.protocol === 'https:' || u.protocol === 'http:') && u.hostname ? u.href : ''; } catch (e) { return ''; }
+  }
+  function shortUrl(href) {
+    try { const u = new URL(href); const host = u.hostname.replace(/^www\./i, '');
+      if (/(^|\.)google\.[a-z.]+$/i.test(host) && /^\/maps/.test(u.pathname)) return 'Google Maps link';
+      return host + ((u.pathname && u.pathname !== '/') || u.search ? '/…' : ''); } catch (e) { return String(href); }
+  }
+  const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  const trimSep = s => String(s || '').replace(/^[\s;.,]+|[\s;,]+$/g, '').replace(/\s*;\s*(;\s*)+/g, '; ').trim();
+  // Returns null when the text isn't a Rex/Webster note (show it as normal text), else
+  // { from: 'Rex'|'Webster', rows: [{ label, parts }] }. Tolerant: any missing piece is just left out.
+  function parseLeadNote(text) {
+    const raw = String(text == null ? '' : text).trim();
+    const pm = /^(rex|webster)\s*:\s*/i.exec(raw);
+    if (!pm || raw.length > 5000) return null;
+    const from = pm[1].toLowerCase() === 'rex' ? 'Rex' : 'Webster';
+    let s = ' ' + raw.slice(pm[0].length) + ' ';
+    const rows = []; let rating = null, unanswered = null, website = null, maps = null;
+    const take = (re, fn) => { const m = re.exec(s); if (!m) return; fn(m); s = s.slice(0, m.index) + ' ; ' + s.slice(m.index + m[0].length); };
+    take(/[\s;.]Maps:\s*(https?:\/\/[^\s<>"`]+)/i, m => { maps = safeHttpUrl(m[1].replace(/[.,;]+$/, '')); if (!maps) maps = null; });
+    take(/\brating:?\s+([0-9](?:\.[0-9])?)\s*(?:stars?\s*)?(?:\(\s*([0-9][0-9,]*)\s+reviews?\s*\))?/i, m => {
+      rating = m[1] + (m[2] ? ` (${m[2]} review${m[2] === '1' ? '' : 's'})` : ''); });
+    take(/\bunanswered reviews?(?: est(?:imate[d]?)?\.?)?:?\s+([^;]*?)(?=\s*;|\.\s|\.?\s*$)/i, m => {
+      let v = m[1].trim().replace(/~\s*/g, 'about ');
+      if (v && !/^about\b/i.test(v) && !/^0\b/.test(v) && /^[0-9]/.test(v)) v = 'about ' + v;
+      unanswered = v || null; });
+    take(/\bwebsite:?\s+(?!(?:is|was)\b)([^;]*?)(?=\s*;|\.\s|\.?\s*$)/i, m => {
+      const v = m[1].trim(), um = /^(https?:\/\/\S+)/i.exec(v);
+      if (um) { const href = safeHttpUrl(um[1].replace(/[.,]+$/, '')); website = href ? [{ text: shortUrl(href).replace(/\/…$/, ''), href }] : linkParts(v); const extra = v.slice(um[1].length).trim(); if (href && extra) website.push({ text: ' ' + extra }); }
+      else if (v) website = linkParts(cap(v.replace(/^has site\b/i, 'has a site'))); });
+    if (rating) rows.push({ label: 'Rating', parts: [{ text: rating }] });
+    if (unanswered) rows.push({ label: 'Reviews without a reply', parts: linkParts(unanswered) });
+    if (website) rows.push({ label: 'Website', parts: website });
+    // what's left: split out "Note:" / "Outreach:" sections, anything else goes under "Notes"
+    const rest = trimSep(s.replace(/(\s*;\s*)+/g, '; ').replace(/;\s*\./g, '.').replace(/\.\s*;/g, '.'));
+    const sec = rest.split(/(?:^|[\s;.])\s*(Note|Notes|Outreach):\s*/i);
+    const other = trimSep(sec[0]);
+    const notes = [];
+    if (other) notes.push({ label: 'Notes', text: other });
+    for (let i = 1; i < sec.length; i += 2) {
+      const t = trimSep(sec[i + 1]); if (!t) continue;
+      const label = /^outreach$/i.test(sec[i]) ? 'Outreach' : 'Notes';
+      const ex = notes.find(n => n.label === label); if (ex) ex.text += ' ' + t; else notes.push({ label, text: t });
+    }
+    notes.forEach(n => rows.push({ label: n.label, parts: linkParts(cap(n.text)) }));
+    if (maps) rows.push({ label: 'Google Maps', parts: [{ text: 'Open map', href: maps }] });
+    if (!rows.length) return null;
+    return { from, rows };
+  }
+  // One-line summary for compact rows (Today page)
+  function leadNoteSummary(text) {
+    const n = parseLeadNote(text); if (!n) return String(text == null ? '' : text);
+    return n.rows.filter(r => r.label !== 'Google Maps').slice(0, 2).map(r => r.label + ': ' + r.parts.map(p => p.text).join('')).join(' · ');
   }
 
   /* ---------- automatic reminder tasks ---------- */
@@ -256,7 +333,7 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   return { DAY, LEAD_STATUSES, DOC_STATUSES, DEFAULT_TEMPLATES, STOP_WORDS, round2, isoDate, addDays, parseDay, money, esc,
-    docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, generateAutoTasks, obsoleteAutoTasks, stats,
+    docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, isProspect, linkParts, safeHttpUrl, shortUrl, parseLeadNote, leadNoteSummary, generateAutoTasks, obsoleteAutoTasks, stats,
     fillTemplate, firstName, isStopReply, smsLink, mailtoLink, telLink, mapLink, contactCheck, reviewRequest, reviewStatus,
     parseCSV, csvCell, toCSV, csvToCustomers, checkConfig, cleanLead };
 });

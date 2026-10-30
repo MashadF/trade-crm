@@ -27,6 +27,30 @@
     return `<span class="due ${cls}">${due < t ? 'Overdue · ' : due === t ? 'Today' : ''}${due === t ? '' : fmtDate(due)}</span>`;
   }
   const statusChip = s => `<span class="chip st-${h(s)}">${h({ quote: 'Quote sent', new: 'New', contacted: 'Contacted', won: 'Won', lost: 'Lost', draft: 'Draft', sent: 'Sent', accepted: 'Accepted', paid: 'Paid', scheduled: 'Scheduled', done: 'Done', canceled: 'Canceled' }[s] || s)}</span>`;
+  /* Lead message -> DOM (display only; the stored text is never changed). Built with textContent and only
+     http(s) links from L.linkParts / L.parseLeadNote, so nothing in a message can inject HTML or script. */
+  function linkInto(el, parts) {
+    parts.forEach(p => {
+      if (p.href && L.safeHttpUrl(p.href)) { const a = document.createElement('a'); a.href = L.safeHttpUrl(p.href); a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'note-link'; a.textContent = p.text; el.appendChild(a); }
+      else el.appendChild(document.createTextNode(p.text));
+    });
+    return el;
+  }
+  function noteNode(text, compact) {
+    const n = L.parseLeadNote(text), box = document.createElement('div');
+    if (!n) { box.className = 'note-plain'; linkInto(box, compact ? [{ text: '“' }].concat(L.linkParts(text), [{ text: '”' }]) : L.linkParts(text)); return box; }
+    box.className = 'note' + (compact ? ' compact' : '');
+    n.rows.forEach(r => {
+      const row = document.createElement('div'); row.className = 'note-row' + (/^(Notes|Outreach)$/.test(r.label) ? ' note-long' : '');
+      const lab = document.createElement('span'); lab.className = 'note-label'; lab.textContent = r.label + ': ';
+      const val = document.createElement('span'); val.className = 'note-val'; linkInto(val, r.parts);
+      row.append(lab, val); box.appendChild(row);
+    });
+    return box;
+  }
+  function fillNotes(root) {
+    $$('[data-note]', root).forEach(el => { const l = S.leads.find(x => x.id === el.dataset.note); el.replaceChildren(noteNode((l && l.message) || '', el.hasAttribute('data-compact'))); });
+  }
   async function guard(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { console.error(e); toast('Could not save: ' + (e.message || e), 5000); throw e; } }
   function download(name, text, type = 'text/csv') {
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: type + ';charset=utf-8' }));
@@ -156,7 +180,7 @@
     const age = L.leadAge(l);
     return `<div class="lead-row" data-lead="${h(l.id)}">
       <div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}</div>
-      <div class="li-sub">${h(l.service || l.message || '')}${l.source ? ' · ' + h(l.source) : ''}</div></div>
+      <div class="li-sub">${h(l.service || L.leadNoteSummary(l.message || ''))}${l.source ? ' · ' + h(l.source) : ''}</div></div>
       <div class="row nowrap">${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">Text</a>` : ''}${!l.phone && l.email ? `<a class="btn sm" href="${h(L.mailtoLink(l.email, 'Your request to ' + B.name, `Hi ${L.firstName(l.name)},\n\nThanks for reaching out to ${B.name}.`))}" data-contact="${h(l.id)}">Email</a>` : ''}</div>
     </div>`;
   }
@@ -228,7 +252,7 @@
           <div class="lead-top"><div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}</div>
             <div class="li-sub">${h([l.service, l.address].filter(Boolean).join(' · '))}</div></div>
             <div class="right small muted">${ago(l.created_at)}<br>${h(l.source || '')}</div></div>
-          ${l.message ? `<div class="lead-msg">“${h(l.message)}”</div>` : ''}
+          ${l.message ? `<div class="lead-msg" data-note="${h(l.id)}" data-compact></div>` : ''}
           <div class="row mt-s">
             ${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">📞 Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">💬 Text</a>` : ''}
             ${l.email ? `<a class="btn sm" href="${h(L.mailtoLink(l.email, 'Your request to ' + B.name, `Hi ${L.firstName(l.name)},\n\nThanks for reaching out to ${B.name}.\n`))}" data-contact="${h(l.id)}">✉️ Email</a>` : ''}
@@ -238,6 +262,7 @@
             ${l.sms_ok ? '<span class="chip ok-chip" title="Ticked “OK to text me” on the form">Text OK</span>' : ''}
           </div></div>`;
       }).join('') : `<div class="empty">No leads here.${leadFilter === 'open' ? ' Share your website form link to start collecting them.' : ''}</div>`}</div>`;
+    fillNotes(view);
     $$('#seg button').forEach(b => b.onclick = () => { leadFilter = b.dataset.f; renderLeads(); });
     $('#addLead').onclick = () => editLead(); $('#formLink').onclick = showFormLink;
     $$('[data-status]').forEach(s => s.onchange = async () => { await guard(() => store.update('leads', s.dataset.status, { status: s.value, contacted_at: S.leads.find(x => x.id === s.dataset.status).contacted_at || (s.value !== 'new' ? new Date().toISOString() : null) }), 'Lead updated'); renderLeads(); });
@@ -256,9 +281,10 @@
   function openLead(id) {
     const l = S.leads.find(x => x.id === id); if (!l) return;
     openModal(l.name, `<dl class="kv"><dt>Status</dt><dd>${statusChip(l.status)}</dd><dt>Phone</dt><dd>${h(l.phone || '—')}</dd><dt>Email</dt><dd>${h(l.email || '—')}</dd><dt>Address</dt><dd>${h(l.address || '—')}</dd>
-      <dt>Service</dt><dd>${h(l.service || '—')}</dd><dt>Message</dt><dd>${h(l.message || '—')}</dd><dt>Source</dt><dd>${h(l.source || '—')}</dd><dt>Received</dt><dd>${fmtDateTime(l.created_at)}</dd>
+      <dt>Service</dt><dd>${h(l.service || '—')}</dd><dt>${(() => { const n = L.parseLeadNote(l.message); return n ? 'Notes from ' + n.from : 'Message'; })()}</dt><dd>${l.message ? `<div class="lead-msg detail" data-note="${h(l.id)}"></div>` : '—'}</dd><dt>Source</dt><dd>${h(l.source || '—')}</dd><dt>Received</dt><dd>${fmtDateTime(l.created_at)}</dd>
       <dt>Text OK?</dt><dd>${l.sms_ok ? 'Yes, ticked on form' : 'Not given'}</dd></dl>
       <div class="modal-actions"><button class="btn danger" id="delLead">Delete</button><button class="btn" id="editL">Edit</button>${l.customer_id ? `<a class="btn primary" href="#/customer/${h(l.customer_id)}" data-close>Customer card</a>` : '<button class="btn primary" id="convL">Make customer</button>'}</div>`, m => {
+      fillNotes(m);
       $('#delLead', m).onclick = async () => { if (confirm('Delete this lead?')) { await guard(() => store.remove('leads', id), 'Deleted'); closeModal(); rerender(); } };
       $('#editL', m).onclick = () => editLead(l);
       const cv = $('#convL', m); if (cv) cv.onclick = async () => { const c = await convertLead(id); closeModal(); location.hash = '#/customer/' + c.id; };

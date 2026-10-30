@@ -216,7 +216,8 @@ code{background:#f1f5f9;padding:1px 5px;border-radius:5px;font-size:.92em}
 .age{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;vertical-align:middle;margin-left:4px;white-space:nowrap}
 .age-fresh{background:#dbeafe;color:#1d4ed8}
 .age-amber{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
-.age-red{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;animation:pulse 2s infinite}
+.age-red{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}
+.age-prospect{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0}
 @keyframes pulse{50%{box-shadow:0 0 0 3px rgba(239,68,68,.15)}}
 .auto{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-soft);padding:1px 6px;border-radius:6px}
 .lead-row{display:flex;align-items:center;gap:10px;padding:10px 2px;border-bottom:1px solid var(--line);cursor:pointer}
@@ -355,3 +356,15 @@ html,body{max-width:100%;overflow-x:clip}
 /* when the browser scrolls a field or button into view (keyboard focus, find-in-page), keep it clear of the sticky top bar and bottom menu */
 html{scroll-padding-top:80px;scroll-padding-bottom:calc(84px + env(safe-area-inset-bottom))}
 @media (min-width:900px){html{scroll-padding-bottom:16px}}
+
+/* lead notes (Rex/Webster prospect notes shown as labeled lines; any URL is a short tappable link) */
+.note{display:flex;flex-direction:column;gap:3px}
+.note-row{line-height:1.4;overflow-wrap:anywhere;min-width:0}
+.note-label{font-weight:650;color:#0f172a}
+.note-val{overflow-wrap:anywhere}
+.note-plain{white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
+.note-link{color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
+.lead-msg .note-link{display:inline-block;padding:2px 0}
+.note.compact .note-long{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.lead-msg.detail{margin-top:0;font-size:15px}
+.age{max-width:100%;white-space:normal;border-radius:10px;line-height:1.35}
