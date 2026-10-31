@@ -386,3 +386,13 @@ html{scroll-padding-top:80px;scroll-padding-bottom:calc(84px + env(safe-area-ins
 .em-dup{border-width:2px}
 #emChecks .notice{margin-bottom:6px}
 #emChecks{margin-bottom:6px}
+/* Leads: Source filter row (All / Rex / Webster / My own) + bot badges (text labels, subtle colors) */
+.src-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:8px;min-width:0}
+.src-label{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.src-row .seg{max-width:100%}
+.chip.bot{font-size:11px;padding:1px 7px;border:1px solid transparent}
+.chip.bot-rex{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
+.chip.bot-webster{background:#ecfeff;color:#155e75;border-color:#a5f3fc}
+.linkish{background:none;border:0;padding:0;font:inherit;color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.linkish b{color:inherit}
+.src-split{margin:-2px 0 6px;line-height:1.8}

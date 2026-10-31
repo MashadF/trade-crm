@@ -11,6 +11,12 @@
   const params = new URLSearchParams(location.search);
   let store = null, S = null, B = null;   // store, state, business
   let leadFilter = 'open', moneyTab = 'quote', custQuery = '';
+  // Leads "Source" filter (All / Rex / Webster / My own): remembered on this device. Display only.
+  const SRC_KEY = 'tradecrm.leadSource';
+  let leadSrc = (() => { try { return L.normSourceFilter(localStorage.getItem(SRC_KEY)); } catch (e) { return 'all'; } })();
+  const setLeadSrc = f => { leadSrc = L.normSourceFilter(f); try { localStorage.setItem(SRC_KEY, leadSrc); } catch (e) { /* private mode */ } };
+  // Small "Rex" / "Webster" label (text, not color only) for leads a bot found.
+  const botBadges = l => L.leadBots(l).map(b => `<span class="chip bot bot-${b.toLowerCase()}" title="Found by your ${b} bot">${b}</span>`).join(' ');
 
   /* ---------------- helpers ---------------- */
   const todayISO = () => L.isoDate(new Date());
@@ -180,7 +186,7 @@
     const age = L.leadAge(l);
     return `<div class="lead-row" data-lead="${h(l.id)}">
       <div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}</div>
-      <div class="li-sub">${h(l.service || L.leadNoteSummary(l.message || ''))}${l.source ? ' · ' + h(l.source) : ''}</div></div>
+      <div class="li-sub">${L.leadBots(l).length ? botBadges(l) + ' ' : ''}${h(l.service || L.leadNoteSummary(l.message || ''))}${l.source && !L.leadBots(l).length ? ' · ' + h(l.source) : ''}</div></div>
       <div class="row nowrap">${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">Text</a>` : ''}${!l.phone && l.email ? `<button class="btn sm" data-email-lead="${h(l.id)}">Email</button>` : ''}</div>
     </div>`;
   }
@@ -219,6 +225,7 @@
       </div>
       <div class="grid2">
         <div class="card"><div class="card-head"><h2>New leads</h2><a href="#/leads" class="small">Lead inbox →</a></div>
+          ${(() => { const c = L.leadSourceCounts(fresh); return c.rex || c.webster ? `<div class="src-split small muted" id="srcSplit">New from: <button class="linkish" data-src-go="rex">Rex <b>${c.rex}</b></button> · <button class="linkish" data-src-go="webster">Webster <b>${c.webster}</b></button> · <button class="linkish" data-src-go="own">My own <b>${c.own}</b></button></div>` : ''; })()}
           ${fresh.length ? fresh.slice(0, 6).map(leadRow).join('') : '<div class="empty">No new leads. 🎉</div>'}</div>
         <div class="card"><div class="card-head"><h2>Tasks due</h2><span class="muted small">${tasks.length} open</span></div>
           ${tasks.length ? tasks.slice(0, 8).map(taskRow).join('') : '<div class="empty">Nothing due. Reminders for open quotes, unpaid invoices and service visits show up here automatically.</div>'}</div>
@@ -227,6 +234,7 @@
           ${upcoming.length ? `<div class="section-label">Coming up</div>${upcoming.slice(0, 5).map(jobLine).join('')}` : ''}</div>
       </div>`;
     $('#addLead').onclick = () => editLead(); $('#addTask').onclick = () => editTask();
+    $$('[data-src-go]').forEach(b => b.onclick = () => { setLeadSrc(b.dataset.srcGo); leadFilter = 'new'; location.hash = '#/leads'; });
     bindCommon(view);
   }
   function jobLine(j) {
@@ -238,10 +246,14 @@
 
   /* ---------------- LEADS ---------------- */
   function renderLeads() {
-    const counts = {}; L.LEAD_STATUSES.forEach(s => { counts[s.id] = S.leads.filter(l => l.status === s.id).length; });
-    const open = S.leads.filter(l => ['new', 'contacted', 'quote'].includes(l.status));
-    const replied = S.leads.filter(l => L.replyState(S.emails || [], l.id).replied);
-    const list = (leadFilter === 'open' ? open : leadFilter === 'replied' ? replied : S.leads.filter(l => l.status === leadFilter)).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // Status chips count within the chosen source; source chips count within the chosen status. The list is both.
+    const bySrc = S.leads.filter(l => L.leadSourceMatch(l, leadSrc));
+    const byStatus = (leads, f) => f === 'open' ? leads.filter(l => ['new', 'contacted', 'quote'].includes(l.status)) : f === 'replied' ? leads.filter(l => L.replyState(S.emails || [], l.id).replied) : leads.filter(l => l.status === f);
+    const counts = {}; L.LEAD_STATUSES.forEach(s => { counts[s.id] = bySrc.filter(l => l.status === s.id).length; });
+    const open = byStatus(bySrc, 'open'), replied = byStatus(bySrc, 'replied');
+    const srcCounts = L.leadSourceCounts(byStatus(S.leads, leadFilter));
+    const srcName = { rex: 'Rex', webster: 'Webster', own: 'your own' }[leadSrc];
+    const list = byStatus(bySrc, leadFilter).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     view.innerHTML = `
       <div class="page-head"><div><h1>Leads</h1><div class="muted small">Answer within 15 minutes. Most customers hire whoever calls back first.</div></div>
         <div class="row"><button class="btn" id="formLink">Website form link</button><button class="btn primary" id="addLead">+ Add lead</button></div></div>
@@ -250,10 +262,12 @@
         ${L.LEAD_STATUSES.map(s => `<button data-f="${s.id}" class="${leadFilter === s.id ? 'on' : ''}">${s.name} <b>${counts[s.id]}</b></button>`).join('')}
         <button data-f="replied" class="${leadFilter === 'replied' ? 'on' : ''}">Replied <b>${replied.length}</b></button>
       </div>
+      <div class="src-row" role="group" aria-label="Where leads came from"><span class="src-label">Source</span>
+        <div class="seg wrap" id="srcSeg">${L.LEAD_SOURCE_FILTERS.map(f => `<button data-src="${f.id}" class="${leadSrc === f.id ? 'on' : ''}" aria-pressed="${leadSrc === f.id}">${f.name} <b>${srcCounts[f.id]}</b></button>`).join('')}</div></div>
       <div class="card mt">${list.length ? list.map(l => {
         const age = L.leadAge(l), rs = L.replyState(S.emails || [], l.id);
         return `<div class="lead" data-lead="${h(l.id)}">
-          <div class="lead-top"><div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}${rs.replied ? ` <span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span>` : rs.sent ? ` <span class="chip em-sent">Emailed</span>` : ''}</div>
+          <div class="lead-top"><div class="li-main"><div class="li-title">${h(l.name)} ${botBadges(l)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}${rs.replied ? ` <span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span>` : rs.sent ? ` <span class="chip em-sent">Emailed</span>` : ''}</div>
             <div class="li-sub">${h([l.service, l.address].filter(Boolean).join(' · '))}</div></div>
             <div class="right small muted">${ago(l.created_at)}<br>${h(l.source || '')}</div></div>
           ${l.message ? `<div class="lead-msg" data-note="${h(l.id)}" data-compact></div>` : ''}
@@ -266,9 +280,11 @@
             <button class="btn sm" data-quote="${h(l.id)}">Quote</button>
             ${l.sms_ok ? '<span class="chip ok-chip" title="Ticked “OK to text me” on the form">Text OK</span>' : ''}
           </div></div>`;
-      }).join('') : `<div class="empty">No leads here.${leadFilter === 'open' ? ' Share your website form link to start collecting them.' : ''}</div>`}</div>`;
+      }).join('') : `<div class="empty">${srcName ? `No ${h(srcName)} leads here. <button class="linkish" id="srcAll">Show all sources</button>` : `No leads here.${leadFilter === 'open' ? ' Share your website form link to start collecting them.' : ''}`}</div>`}</div>`;
     fillNotes(view);
     $$('#seg button').forEach(b => b.onclick = () => { leadFilter = b.dataset.f; renderLeads(); });
+    $$('#srcSeg button').forEach(b => b.onclick = () => { setLeadSrc(b.dataset.src); renderLeads(); });
+    const sa = $('#srcAll'); if (sa) sa.onclick = () => { setLeadSrc('all'); renderLeads(); };
     $('#addLead').onclick = () => editLead(); $('#formLink').onclick = showFormLink;
     $$('[data-status]').forEach(s => s.onchange = async () => { await guard(() => store.update('leads', s.dataset.status, { status: s.value, contacted_at: S.leads.find(x => x.id === s.dataset.status).contacted_at || (s.value !== 'new' ? new Date().toISOString() : null) }), 'Lead updated'); renderLeads(); });
     $$('[data-convert]').forEach(b => b.onclick = async () => { const c = await convertLead(b.dataset.convert); location.hash = '#/customer/' + c.id; });
@@ -287,7 +303,7 @@
   function openLead(id) {
     const l = S.leads.find(x => x.id === id); if (!l) return;
     openModal(l.name, `<dl class="kv"><dt>Status</dt><dd>${statusChip(l.status)}</dd><dt>Phone</dt><dd>${h(l.phone || '—')}</dd><dt>Email</dt><dd>${h(l.email || '—')}</dd><dt>Address</dt><dd>${h(l.address || '—')}</dd>
-      <dt>Service</dt><dd>${h(l.service || '—')}</dd><dt>${(() => { const n = L.parseLeadNote(l.message); return n ? 'Notes from ' + n.from : 'Message'; })()}</dt><dd>${l.message ? `<div class="lead-msg detail" data-note="${h(l.id)}"></div>` : '—'}</dd><dt>Source</dt><dd>${h(l.source || '—')}</dd><dt>Received</dt><dd>${fmtDateTime(l.created_at)}</dd>
+      <dt>Service</dt><dd>${h(l.service || '—')}</dd><dt>${(() => { const n = L.parseLeadNote(l.message); return n ? 'Notes from ' + n.from : 'Message'; })()}</dt><dd>${l.message ? `<div class="lead-msg detail" data-note="${h(l.id)}"></div>` : '—'}</dd><dt>Source</dt><dd>${L.leadBots(l).length ? botBadges(l) + ' ' : ''}${h(l.source || '—')}</dd><dt>Received</dt><dd>${fmtDateTime(l.created_at)}</dd>
       <dt>Text OK?</dt><dd>${l.sms_ok ? 'Yes, ticked on form' : 'Not given'}</dd>${(() => { const rs = L.replyState(S.emails || [], l.id); return rs.replied ? `<dt>Replied</dt><dd><span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span></dd>` : ''; })()}</dl>
       <div class="em-head"><h3>Emails</h3><button class="btn sm primary" id="emailL">✉️ Write email</button></div>
       ${emailHistoryHtml(L.emailHistory(S.emails || [], { leadId: l.id }))}

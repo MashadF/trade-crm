@@ -10,7 +10,7 @@
  * Releasing a new version: change VERSION. Old caches are deleted on activate, and the open app
  * shows "Update available - Reload".
  */
-const VERSION = 'v2.5.0';
+const VERSION = 'v2.6.0';
 const CACHE = 'trade-crm-shell-' + VERSION;
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'config.js', 'js/logic.js', 'js/store.js',

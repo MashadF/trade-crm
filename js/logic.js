@@ -57,7 +57,30 @@
   // Speed-to-lead timer for leads still marked New with no first contact. Levels (unchanged): fresh < 15 min,
   // amber from 15 min, red from 1 hour (overdue). Prospects found by Rex/Webster (source starts with their name)
   // never asked for a quote, so the 15-minute rule doesn't apply: they get a calm grey "prospect" badge.
-  const isProspect = lead => /^\s*(rex|webster)\b/i.test(String((lead && lead.source) || ''));
+  /* ---------- lead source: which bot found it (display/filter only; stored data untouched) ---------- */
+  // A source part counts as a bot when it is exactly the bot's name or starts with it followed by a
+  // non-letter (e.g. "Rex - unanswered reviews", "rex-2", " REX "). "Rexford Plumbing" / "Websterville" don't.
+  // A source can list several finders separated by ; | or , ("Webster - no website; Rex - unanswered reviews").
+  const BOT_RE = { Rex: /^\s*rex(?![a-z0-9_])/i, Webster: /^\s*webster(?![a-z0-9_])/i };
+  const LEAD_SOURCE_FILTERS = [{ id: 'all', name: 'All' }, { id: 'rex', name: 'Rex' }, { id: 'webster', name: 'Webster' }, { id: 'own', name: 'My own' }];
+  function leadBots(lead) {
+    const parts = String((lead && lead.source) || '').split(/[;|,]/);
+    return Object.keys(BOT_RE).filter(b => parts.some(p => BOT_RE[b].test(p)));
+  }
+  function leadSourceMatch(lead, filter) {
+    const bots = leadBots(lead);
+    if (filter === 'rex') return bots.includes('Rex');
+    if (filter === 'webster') return bots.includes('Webster');
+    if (filter === 'own') return !bots.length;
+    return true;
+  }
+  const normSourceFilter = f => LEAD_SOURCE_FILTERS.some(x => x.id === f) ? f : 'all';
+  function leadSourceCounts(leads) {
+    const c = { all: 0, rex: 0, webster: 0, own: 0 };
+    (leads || []).forEach(l => { const b = leadBots(l); c.all++; if (b.includes('Rex')) c.rex++; if (b.includes('Webster')) c.webster++; if (!b.length) c.own++; });
+    return c;
+  }
+  const isProspect = lead => leadBots(lead).length > 0;
   function leadAge(lead, now) {
     now = now ? new Date(now) : new Date();
     if (!lead || lead.status !== 'new' || lead.contacted_at) return { level: 'none', minutes: 0, label: '' };
@@ -450,7 +473,7 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   return { DAY, LEAD_STATUSES, DOC_STATUSES, DEFAULT_TEMPLATES, STOP_WORDS, round2, isoDate, addDays, parseDay, money, esc,
-    docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, isProspect, linkParts, safeHttpUrl, shortUrl, parseLeadNote, leadNoteSummary, generateAutoTasks, obsoleteAutoTasks, stats,
+    docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, isProspect, leadBots, leadSourceMatch, leadSourceCounts, normSourceFilter, LEAD_SOURCE_FILTERS, linkParts, safeHttpUrl, shortUrl, parseLeadNote, leadNoteSummary, generateAutoTasks, obsoleteAutoTasks, stats,
     fillTemplate, firstName, isStopReply, smsLink, mailtoLink, telLink, mapLink, contactCheck, reviewRequest, reviewStatus,
     parseCSV, csvCell, toCSV, csvToCustomers, checkConfig, cleanLead,
     OPT_OUT_LINE, MAILTO_MAX, GMAIL_MAX, EMAIL_TEMPLATES, isEmail, greetingName, emailVars, complianceFooter, hasOptOut, buildEmail, checkEmail,
