@@ -396,3 +396,6 @@ html{scroll-padding-top:80px;scroll-padding-bottom:calc(84px + env(safe-area-ins
 .linkish{background:none;border:0;padding:0;font:inherit;color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .linkish b{color:inherit}
 .src-split{margin:-2px 0 6px;line-height:1.8}
+/* Leads: "No email" label (icon + text, calm slate with dashed border so it reads differently from status/bot chips) */
+.chip.no-email{font-size:11px;padding:1px 7px;background:#f8fafc;color:#475569;border:1px dashed #94a3b8;font-weight:600}
+.no-email-hint{margin-top:3px}

@@ -15,6 +15,12 @@
   const SRC_KEY = 'tradecrm.leadSource';
   let leadSrc = (() => { try { return L.normSourceFilter(localStorage.getItem(SRC_KEY)); } catch (e) { return 'all'; } })();
   const setLeadSrc = f => { leadSrc = L.normSourceFilter(f); try { localStorage.setItem(SRC_KEY, leadSrc); } catch (e) { /* private mode */ } };
+  // Leads "Email" filter (All / Has email / No email): remembered on this device. Display only.
+  const EM_KEY = 'tradecrm.leadEmail';
+  let leadEm = (() => { try { return L.normEmailFilter(localStorage.getItem(EM_KEY)); } catch (e) { return 'all'; } })();
+  const setLeadEm = f => { leadEm = L.normEmailFilter(f); try { localStorage.setItem(EM_KEY, leadEm); } catch (e) { /* private mode */ } };
+  // Calm "No email" label (icon + text, not color only) for leads without a usable email address.
+  const noEmailBadge = l => L.leadHasEmail(l) ? '' : '<span class="chip no-email" title="No usable email address on file. Call or text instead."><span aria-hidden="true">⊘</span> No email</span>';
   // Small "Rex" / "Webster" label (text, not color only) for leads a bot found.
   const botBadges = l => L.leadBots(l).map(b => `<span class="chip bot bot-${b.toLowerCase()}" title="Found by your ${b} bot">${b}</span>`).join(' ');
 
@@ -185,7 +191,7 @@
   function leadRow(l) {
     const age = L.leadAge(l);
     return `<div class="lead-row" data-lead="${h(l.id)}">
-      <div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}</div>
+      <div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''} ${noEmailBadge(l)}</div>
       <div class="li-sub">${L.leadBots(l).length ? botBadges(l) + ' ' : ''}${h(l.service || L.leadNoteSummary(l.message || ''))}${l.source && !L.leadBots(l).length ? ' · ' + h(l.source) : ''}</div></div>
       <div class="row nowrap">${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">Text</a>` : ''}${!l.phone && l.email ? `<button class="btn sm" data-email-lead="${h(l.id)}">Email</button>` : ''}</div>
     </div>`;
@@ -226,6 +232,7 @@
       <div class="grid2">
         <div class="card"><div class="card-head"><h2>New leads</h2><a href="#/leads" class="small">Lead inbox →</a></div>
           ${(() => { const c = L.leadSourceCounts(fresh); return c.rex || c.webster ? `<div class="src-split small muted" id="srcSplit">New from: <button class="linkish" data-src-go="rex">Rex <b>${c.rex}</b></button> · <button class="linkish" data-src-go="webster">Webster <b>${c.webster}</b></button> · <button class="linkish" data-src-go="own">My own <b>${c.own}</b></button></div>` : ''; })()}
+          ${(() => { const n = L.leadEmailCounts(fresh).no; return n ? `<div class="src-split small muted" id="emSplit"><button class="linkish" data-em-go="no">No email: <b>${n}</b></button> · call or text these</div>` : ''; })()}
           ${fresh.length ? fresh.slice(0, 6).map(leadRow).join('') : '<div class="empty">No new leads. 🎉</div>'}</div>
         <div class="card"><div class="card-head"><h2>Tasks due</h2><span class="muted small">${tasks.length} open</span></div>
           ${tasks.length ? tasks.slice(0, 8).map(taskRow).join('') : '<div class="empty">Nothing due. Reminders for open quotes, unpaid invoices and service visits show up here automatically.</div>'}</div>
@@ -234,7 +241,8 @@
           ${upcoming.length ? `<div class="section-label">Coming up</div>${upcoming.slice(0, 5).map(jobLine).join('')}` : ''}</div>
       </div>`;
     $('#addLead').onclick = () => editLead(); $('#addTask').onclick = () => editTask();
-    $$('[data-src-go]').forEach(b => b.onclick = () => { setLeadSrc(b.dataset.srcGo); leadFilter = 'new'; location.hash = '#/leads'; });
+    $$('[data-src-go]').forEach(b => b.onclick = () => { setLeadSrc(b.dataset.srcGo); setLeadEm('all'); leadFilter = 'new'; location.hash = '#/leads'; });
+    $$('[data-em-go]').forEach(b => b.onclick = () => { setLeadSrc('all'); setLeadEm(b.dataset.emGo); leadFilter = 'new'; location.hash = '#/leads'; });
     bindCommon(view);
   }
   function jobLine(j) {
@@ -246,12 +254,13 @@
 
   /* ---------------- LEADS ---------------- */
   function renderLeads() {
-    // Status chips count within the chosen source; source chips count within the chosen status. The list is both.
-    const bySrc = S.leads.filter(l => L.leadSourceMatch(l, leadSrc));
+    // Each filter row counts within the choices made in the other rows (status, Source, Email). The list is all three.
+    const bySrc = S.leads.filter(l => L.leadSourceMatch(l, leadSrc) && L.leadEmailMatch(l, leadEm));
     const byStatus = (leads, f) => f === 'open' ? leads.filter(l => ['new', 'contacted', 'quote'].includes(l.status)) : f === 'replied' ? leads.filter(l => L.replyState(S.emails || [], l.id).replied) : leads.filter(l => l.status === f);
     const counts = {}; L.LEAD_STATUSES.forEach(s => { counts[s.id] = bySrc.filter(l => l.status === s.id).length; });
     const open = byStatus(bySrc, 'open'), replied = byStatus(bySrc, 'replied');
-    const srcCounts = L.leadSourceCounts(byStatus(S.leads, leadFilter));
+    const srcCounts = L.leadSourceCounts(byStatus(S.leads.filter(l => L.leadEmailMatch(l, leadEm)), leadFilter));
+    const emCounts = L.leadEmailCounts(byStatus(S.leads.filter(l => L.leadSourceMatch(l, leadSrc)), leadFilter));
     const srcName = { rex: 'Rex', webster: 'Webster', own: 'your own' }[leadSrc];
     const list = byStatus(bySrc, leadFilter).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     view.innerHTML = `
@@ -264,10 +273,12 @@
       </div>
       <div class="src-row" role="group" aria-label="Where leads came from"><span class="src-label">Source</span>
         <div class="seg wrap" id="srcSeg">${L.LEAD_SOURCE_FILTERS.map(f => `<button data-src="${f.id}" class="${leadSrc === f.id ? 'on' : ''}" aria-pressed="${leadSrc === f.id}">${f.name} <b>${srcCounts[f.id]}</b></button>`).join('')}</div></div>
+      <div class="src-row" role="group" aria-label="Whether leads have an email address"><span class="src-label">Email</span>
+        <div class="seg wrap" id="emSeg">${L.LEAD_EMAIL_FILTERS.map(f => `<button data-em="${f.id}" class="${leadEm === f.id ? 'on' : ''}" aria-pressed="${leadEm === f.id}">${f.name} <b>${emCounts[f.id]}</b></button>`).join('')}</div></div>
       <div class="card mt">${list.length ? list.map(l => {
         const age = L.leadAge(l), rs = L.replyState(S.emails || [], l.id);
         return `<div class="lead" data-lead="${h(l.id)}">
-          <div class="lead-top"><div class="li-main"><div class="li-title">${h(l.name)} ${botBadges(l)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}${rs.replied ? ` <span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span>` : rs.sent ? ` <span class="chip em-sent">Emailed</span>` : ''}</div>
+          <div class="lead-top"><div class="li-main"><div class="li-title">${h(l.name)} ${botBadges(l)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}${rs.replied ? ` <span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span>` : rs.sent ? ` <span class="chip em-sent">Emailed</span>` : ''} ${noEmailBadge(l)}</div>
             <div class="li-sub">${h([l.service, l.address].filter(Boolean).join(' · '))}</div></div>
             <div class="right small muted">${ago(l.created_at)}<br>${h(l.source || '')}</div></div>
           ${l.message ? `<div class="lead-msg" data-note="${h(l.id)}" data-compact></div>` : ''}
@@ -280,11 +291,13 @@
             <button class="btn sm" data-quote="${h(l.id)}">Quote</button>
             ${l.sms_ok ? '<span class="chip ok-chip" title="Ticked “OK to text me” on the form">Text OK</span>' : ''}
           </div></div>`;
-      }).join('') : `<div class="empty">${srcName ? `No ${h(srcName)} leads here. <button class="linkish" id="srcAll">Show all sources</button>` : `No leads here.${leadFilter === 'open' ? ' Share your website form link to start collecting them.' : ''}`}</div>`}</div>`;
+      }).join('') : `<div class="empty">${leadEm !== 'all' ? `No ${leadSrc === 'own' ? 'leads of your own' : (srcName ? h(srcName) + ' ' : '') + 'leads'} ${leadEm === 'no' ? 'without an email' : 'with an email'} here. <button class="linkish" id="filtersAll">Show all</button>` : srcName ? `No ${h(srcName)} leads here. <button class="linkish" id="srcAll">Show all sources</button>` : `No leads here.${leadFilter === 'open' ? ' Share your website form link to start collecting them.' : ''}`}</div>`}</div>`;
     fillNotes(view);
     $$('#seg button').forEach(b => b.onclick = () => { leadFilter = b.dataset.f; renderLeads(); });
     $$('#srcSeg button').forEach(b => b.onclick = () => { setLeadSrc(b.dataset.src); renderLeads(); });
     const sa = $('#srcAll'); if (sa) sa.onclick = () => { setLeadSrc('all'); renderLeads(); };
+    $$('#emSeg button').forEach(b => b.onclick = () => { setLeadEm(b.dataset.em); renderLeads(); });
+    const fa = $('#filtersAll'); if (fa) fa.onclick = () => { setLeadSrc('all'); setLeadEm('all'); renderLeads(); };
     $('#addLead').onclick = () => editLead(); $('#formLink').onclick = showFormLink;
     $$('[data-status]').forEach(s => s.onchange = async () => { await guard(() => store.update('leads', s.dataset.status, { status: s.value, contacted_at: S.leads.find(x => x.id === s.dataset.status).contacted_at || (s.value !== 'new' ? new Date().toISOString() : null) }), 'Lead updated'); renderLeads(); });
     $$('[data-convert]').forEach(b => b.onclick = async () => { const c = await convertLead(b.dataset.convert); location.hash = '#/customer/' + c.id; });
@@ -302,7 +315,7 @@
   }
   function openLead(id) {
     const l = S.leads.find(x => x.id === id); if (!l) return;
-    openModal(l.name, `<dl class="kv"><dt>Status</dt><dd>${statusChip(l.status)}</dd><dt>Phone</dt><dd>${h(l.phone || '—')}</dd><dt>Email</dt><dd>${h(l.email || '—')}</dd><dt>Address</dt><dd>${h(l.address || '—')}</dd>
+    openModal(l.name, `<dl class="kv"><dt>Status</dt><dd>${statusChip(l.status)}</dd><dt>Phone</dt><dd>${h(l.phone || '—')}</dd><dt>Email</dt><dd>${L.leadHasEmail(l) ? h(l.email) : `${String(l.email || '').trim() ? h(l.email) + ' ' : ''}${noEmailBadge(l)}<div class="small muted no-email-hint">${String(l.email || '').trim() ? 'That address does not look right. ' : ''}${l.phone ? 'Call or text instead.' : 'No phone either. Add an email or phone with Edit.'}</div>`}</dd><dt>Address</dt><dd>${h(l.address || '—')}</dd>
       <dt>Service</dt><dd>${h(l.service || '—')}</dd><dt>${(() => { const n = L.parseLeadNote(l.message); return n ? 'Notes from ' + n.from : 'Message'; })()}</dt><dd>${l.message ? `<div class="lead-msg detail" data-note="${h(l.id)}"></div>` : '—'}</dd><dt>Source</dt><dd>${L.leadBots(l).length ? botBadges(l) + ' ' : ''}${h(l.source || '—')}</dd><dt>Received</dt><dd>${fmtDateTime(l.created_at)}</dd>
       <dt>Text OK?</dt><dd>${l.sms_ok ? 'Yes, ticked on form' : 'Not given'}</dd>${(() => { const rs = L.replyState(S.emails || [], l.id); return rs.replied ? `<dt>Replied</dt><dd><span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span></dd>` : ''; })()}</dl>
       <div class="em-head"><h3>Emails</h3><button class="btn sm primary" id="emailL">✉️ Write email</button></div>

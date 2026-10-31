@@ -81,6 +81,22 @@
     return c;
   }
   const isProspect = lead => leadBots(lead).length > 0;
+  /* ---------- lead email: has a usable address or not (display/filter only; stored data untouched) ---------- */
+  // "No email" = empty, only spaces, or not a plausible address (same rule the email composer uses to allow sending:
+  // something@domain.tld, no spaces). "abc", "n/a", "none", "a@b" all count as no email.
+  const LEAD_EMAIL_FILTERS = [{ id: 'all', name: 'All' }, { id: 'has', name: 'Has email' }, { id: 'no', name: 'No email' }];
+  const leadHasEmail = lead => isEmail(lead && lead.email);
+  function leadEmailMatch(lead, filter) {
+    if (filter === 'has') return leadHasEmail(lead);
+    if (filter === 'no') return !leadHasEmail(lead);
+    return true;
+  }
+  const normEmailFilter = f => LEAD_EMAIL_FILTERS.some(x => x.id === f) ? f : 'all';
+  function leadEmailCounts(leads) {
+    const c = { all: 0, has: 0, no: 0 };
+    (leads || []).forEach(l => { c.all++; if (leadHasEmail(l)) c.has++; else c.no++; });
+    return c;
+  }
   function leadAge(lead, now) {
     now = now ? new Date(now) : new Date();
     if (!lead || lead.status !== 'new' || lead.contacted_at) return { level: 'none', minutes: 0, label: '' };
@@ -473,7 +489,7 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   return { DAY, LEAD_STATUSES, DOC_STATUSES, DEFAULT_TEMPLATES, STOP_WORDS, round2, isoDate, addDays, parseDay, money, esc,
-    docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, isProspect, leadBots, leadSourceMatch, leadSourceCounts, normSourceFilter, LEAD_SOURCE_FILTERS, linkParts, safeHttpUrl, shortUrl, parseLeadNote, leadNoteSummary, generateAutoTasks, obsoleteAutoTasks, stats,
+    docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, isProspect, leadBots, leadSourceMatch, leadSourceCounts, normSourceFilter, LEAD_SOURCE_FILTERS, leadHasEmail, leadEmailMatch, leadEmailCounts, normEmailFilter, LEAD_EMAIL_FILTERS, linkParts, safeHttpUrl, shortUrl, parseLeadNote, leadNoteSummary, generateAutoTasks, obsoleteAutoTasks, stats,
     fillTemplate, firstName, isStopReply, smsLink, mailtoLink, telLink, mapLink, contactCheck, reviewRequest, reviewStatus,
     parseCSV, csvCell, toCSV, csvToCustomers, checkConfig, cleanLead,
     OPT_OUT_LINE, MAILTO_MAX, GMAIL_MAX, EMAIL_TEMPLATES, isEmail, greetingName, emailVars, complianceFooter, hasOptOut, buildEmail, checkEmail,
