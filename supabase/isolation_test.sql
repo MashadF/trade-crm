@@ -157,6 +157,51 @@ begin
 end $$;
 reset role;
 
+-- 9b. Email log: A's emails are private to A (drafts, sent log, replied mark)
+do $$
+declare n int; ok boolean; a_lead uuid; b_cust uuid := 'b2b2b2b2-0000-0000-0000-000000000001';
+begin
+  perform pg_temp.login('aaaaaaaa-0000-0000-0000-00000000000a');
+  select id into a_lead from public.leads where name = 'Web Lead';
+  insert into public.emails (id, lead_id, to_email, subject, body, status, sent_at)
+    values ('a5a5a5a5-0000-0000-0000-000000000001', a_lead, 'web@example.com', 'Hi', 'Body', 'sent', now());
+  insert into public.emails (lead_id, subject, status) values (a_lead, 'Draft', 'draft');
+  update public.emails set replied_at = now() where id = 'a5a5a5a5-0000-0000-0000-000000000001';
+  get diagnostics n = row_count; if n <> 1 then raise exception 'FAIL 11a: A could not mark own email replied'; end if;
+  select count(*) into n from public.emails; if n <> 2 then raise exception 'FAIL 11b: A sees % emails', n; end if;
+  ok := false;
+  begin insert into public.emails (lead_id, status) values (a_lead, 'sent'); exception when others then ok := true; end;
+  if not ok then raise exception 'FAIL 11c: sent email without sent_at allowed'; end if;
+  ok := false;
+  begin insert into public.emails (status) values ('draft'); exception when others then ok := true; end;
+  if not ok then raise exception 'FAIL 11d: email with no lead or customer allowed'; end if;
+  perform set_config('role', 'none', true);
+  perform pg_temp.login('bbbbbbbb-0000-0000-0000-00000000000b');
+  select count(*) into n from public.emails; if n <> 0 then raise exception 'FAIL 11e: B can read A emails'; end if;
+  update public.emails set subject = 'hacked', replied_at = now() where id = 'a5a5a5a5-0000-0000-0000-000000000001';
+  get diagnostics n = row_count; if n <> 0 then raise exception 'FAIL 11f: B updated A email'; end if;
+  delete from public.emails where id = 'a5a5a5a5-0000-0000-0000-000000000001';
+  get diagnostics n = row_count; if n <> 0 then raise exception 'FAIL 11g: B deleted A email'; end if;
+  ok := false;
+  begin insert into public.emails (business_id, customer_id, status) values ('a1a1a1a1-0000-0000-0000-000000000001', 'a2a2a2a2-0000-0000-0000-000000000001', 'draft');
+  exception when others then ok := true; end;
+  if not ok then raise exception 'FAIL 11h: B inserted email into A business'; end if;
+  ok := false;
+  begin insert into public.emails (lead_id, status) values (a_lead, 'draft'); exception when others then ok := true; end;
+  if not ok then raise exception 'FAIL 11i: B linked an email to A lead'; end if;
+  insert into public.emails (customer_id, subject, status) values (b_cust, 'B own draft', 'draft');
+  perform set_config('role', 'none', true);
+  perform pg_temp.as_anon();
+  ok := false;
+  begin perform 1 from public.emails limit 1; exception when others then ok := true; end;
+  if not ok then raise exception 'FAIL 11j: anon can read emails'; end if;
+  ok := false;
+  begin insert into public.emails (business_id, lead_id, status) values ('a1a1a1a1-0000-0000-0000-000000000001', a_lead, 'draft'); exception when others then ok := true; end;
+  if not ok then raise exception 'FAIL 11k: anon inserted an email'; end if;
+  perform set_config('role', 'none', true);
+end $$;
+reset role;
+
 -- 10. Deleting a business (delete-my-data) removes all its rows and nobody else's
 do $$
 declare n int;
@@ -176,6 +221,10 @@ begin
   if n <> 0 then raise exception 'FAIL 10c: B rows left after delete'; end if;
   select count(*) into n from public.customers where business_id = 'a1a1a1a1-0000-0000-0000-000000000001';
   if n <> 1 then raise exception 'FAIL 10d: A rows affected by B delete'; end if;
+  select count(*) into n from public.emails where business_id = 'b1b1b1b1-0000-0000-0000-000000000001';
+  if n <> 0 then raise exception 'FAIL 10e: B emails left after delete'; end if;
+  select count(*) into n from public.emails where business_id = 'a1a1a1a1-0000-0000-0000-000000000001';
+  if n <> 2 then raise exception 'FAIL 10f: A emails affected by B delete'; end if;
   raise notice 'ALL ISOLATION TESTS PASSED';
 end $$;
 

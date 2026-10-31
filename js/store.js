@@ -9,7 +9,7 @@
   else root.CRMStore = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
-  const TABLES = ['customers', 'leads', 'jobs', 'documents', 'tasks', 'review_requests'];
+  const TABLES = ['customers', 'leads', 'jobs', 'documents', 'tasks', 'review_requests', 'emails'];
   const COLUMNS = {
     businesses: ['name', 'accent', 'phone', 'email', 'postal_address', 'google_review_link', 'review_sms', 'review_email', 'review_followup', 'support_email', 'tax_rate', 'lead_form_enabled'],
     customers: ['name', 'phone', 'email', 'address', 'source', 'tags', 'notes', 'sms_ok', 'email_ok', 'consent_log', 'opted_out', 'opted_out_at', 'next_service_due', 'updated_at'],
@@ -17,13 +17,14 @@
     jobs: ['customer_id', 'title', 'date', 'price', 'status', 'notes', 'photos', 'updated_at'],
     documents: ['customer_id', 'kind', 'number', 'status', 'items', 'tax_rate', 'deposit', 'pay_link', 'notes', 'due_date', 'sent_at', 'paid_at', 'accepted_name', 'accepted_at', 'accepted_via', 'from_quote_id', 'updated_at'],
     tasks: ['title', 'due', 'done', 'done_at', 'customer_id', 'auto_key'],
-    review_requests: ['customer_id', 'channel', 'kind']
+    review_requests: ['customer_id', 'channel', 'kind'],
+    emails: ['lead_id', 'customer_id', 'to_email', 'subject', 'body', 'template', 'source', 'status', 'sent_at', 'replied_at', 'updated_at']
   };
-  const ORDER = { customers: 'name', leads: 'created_at', jobs: 'date', documents: 'created_at', tasks: 'due', review_requests: 'created_at' };
+  const ORDER = { customers: 'name', leads: 'created_at', jobs: 'date', documents: 'created_at', tasks: 'due', review_requests: 'created_at', emails: 'created_at' };
   const pick = (table, obj) => { const o = {}; (COLUMNS[table] || []).forEach(k => { if (obj && obj[k] !== undefined) o[k] = obj[k]; }); return o; };
   const uuid = () => (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID()
     : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
-  const emptyState = () => ({ customers: [], leads: [], jobs: [], documents: [], tasks: [], review_requests: [] });
+  const emptyState = () => ({ customers: [], leads: [], jobs: [], documents: [], tasks: [], review_requests: [], emails: [] });
   const nowIso = () => new Date().toISOString();
   const memStorage = () => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; };
 
@@ -56,9 +57,10 @@
     self.remove = async (table, id) => {
       self.state[table] = self.state[table].filter(x => x.id !== id);
       if (table === 'customers') {   // mirror the database's cascade / set-null rules
-        ['jobs', 'tasks', 'review_requests'].forEach(t => { self.state[t] = self.state[t].filter(x => x.customer_id !== id); });
+        ['jobs', 'tasks', 'review_requests', 'emails'].forEach(t => { self.state[t] = self.state[t].filter(x => x.customer_id !== id); });
         ['leads', 'documents'].forEach(t => self.state[t].forEach(x => { if (x.customer_id === id) x.customer_id = null; }));
       }
+      if (table === 'leads') self.state.emails = self.state.emails.filter(x => x.lead_id !== id);   // emails cascade with their lead
       save();
     };
     self.replaceAll = async (data) => {   // used by "load example data" and JSON restore
@@ -151,14 +153,21 @@
     self.remove = async (table, id) => {
       must(await client.from(table).delete().eq('id', id).eq('business_id', bid()));
       self.state[table] = self.state[table].filter(x => x.id !== id);
+      if (table === 'leads') self.state.emails = self.state.emails.filter(x => x.lead_id !== id);   // database cascades these
       if (table === 'customers') { await self.loadAll(); } else writeCache();
     };
     self.replaceAll = async (data) => {   // import from a JSON backup into this (empty or not) business: adds rows, new ids
       const idMap = {};
       for (const c of data.customers || []) { const n = await self.insert('customers', c); idMap[c.id] = n.id; }
       const remap = r => Object.assign({}, r, { customer_id: r.customer_id ? (idMap[r.customer_id] || null) : null });
+      const leadMap = {};
       for (const t of ['leads', 'jobs', 'documents', 'tasks', 'review_requests'])
-        for (const r of data[t] || []) { if ((t === 'jobs' || t === 'review_requests') && !idMap[r.customer_id]) continue; await self.insert(t, Object.assign(remap(r), t === 'jobs' ? { photos: [] } : {})); }
+        for (const r of data[t] || []) { if ((t === 'jobs' || t === 'review_requests') && !idMap[r.customer_id]) continue; const n = await self.insert(t, Object.assign(remap(r), t === 'jobs' ? { photos: [] } : {})); if (t === 'leads' && n) leadMap[r.id] = n.id; }
+      for (const r of data.emails || []) {   // email log: keep only rows whose lead or customer came across
+        const e = Object.assign(remap(r), { lead_id: r.lead_id ? (leadMap[r.lead_id] || null) : null });
+        if (!e.lead_id && !e.customer_id) continue;
+        await self.insert('emails', e);
+      }
       await self.loadAll();
     };
     self.uploadPhoto = async (jobId, blob) => {

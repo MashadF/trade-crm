@@ -330,10 +330,129 @@
     return { ok: true, spam: false, lead };
   }
 
+
+  /* ---------------- Email composer (drafts locally; the CRM never sends email itself) ---------------- */
+  const OPT_OUT_LINE = 'Not interested? Reply "no thanks" and I won\'t email you again.';
+  const MAILTO_MAX = 1900;    // longer mailto: links get cut off by some phones / mail apps
+  const GMAIL_MAX = 7500;     // Gmail compose links stop working well past ~8k characters
+  const EMAIL_TEMPLATES = [
+    { id: 'intro', name: 'First outreach / intro', outreach: true,
+      subject: '{business}: about {service}',
+      body: 'Hi {name},\n\nThis is {business}. I\'m reaching out about {service}.\n\nIf it would help, I\'m happy to talk it over. Just reply to this email{callClause}.\n\nThanks,\n{signature}' },
+    { id: 'followup', name: 'Follow-up after no reply', outreach: true,
+      subject: 'Following up: {service}',
+      body: 'Hi {name},\n\nJust following up on my earlier email about {service}. If now isn\'t a good time, no problem.\n\nIf you would like to talk, reply here{callClause}.\n\nThanks,\n{signature}' },
+    { id: 'quote', name: 'Quote ready', outreach: false,
+      subject: 'Your quote from {business}',
+      body: 'Hi {name},\n\nYour quote for {service} is ready.\n\n{quoteLine}\n\nAny questions, just reply here{callClause}.\n\nThanks,\n{signature}' },
+    { id: 'review', name: 'Review request', outreach: true,
+      subject: 'Thanks from {business}, one quick favor?',
+      body: 'Hi {name},\n\nThank you for choosing {business}. If you have a minute, would you leave a short review? It really helps a small business.\n\n{reviewLine}\n\nThanks,\n{signature}' },
+    { id: 'thanks', name: 'Thank you after job', outreach: false,
+      subject: 'Thank you from {business}',
+      body: 'Hi {name},\n\nThank you for having {business} out for {service}. If anything needs a second look, just reply here{callClause}.\n\nThanks,\n{signature}' }
+  ];
+  const isEmail = e => /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[a-z]{2,}$/i.test(String(e || '').trim());
+  // "Hi Sam" for people, "Hi Castle Painting team" for businesses found by Rex/Webster
+  function greetingName(person) {
+    const n = String((person && person.name) || '').trim();
+    if (!n) return 'there';
+    return isProspect(person) ? `${n} team` : firstName(n);
+  }
+  function emailVars(business, person, extra) {
+    business = business || {}; person = person || {}; extra = extra || {};
+    const biz = String(business.name || '').trim() || 'our business';
+    const phone = String(business.phone || '').trim();
+    const quote = safeHttpUrl(extra.quoteLink || '');
+    const review = safeHttpUrl(business.google_review_link || '');
+    return {
+      name: greetingName(person), fullName: String(person.name || '').trim(),
+      service: String(extra.service || person.service || '').trim() || 'your project',
+      business: biz, phone, address: String(business.postal_address || '').trim(),
+      reviewLink: review,
+      callClause: phone ? ` or call ${phone}` : '',
+      signature: biz + (phone ? `\n${phone}` : ''),
+      quoteLine: quote ? `You can view it here: ${quote}` : '[Paste your quote link here, or attach the PDF]',
+      reviewLine: review || '[Add your Google review link in Settings]'
+    };
+  }
+  // The footer every outreach / marketing email gets (CAN-SPAM: postal address + a plain way to opt out).
+  function complianceFooter(business) {
+    const addr = String((business && business.postal_address) || '').trim();
+    const name = String((business && business.name) || '').trim();
+    return `\n\n--\n${[name, addr].filter(Boolean).join('\n')}${name || addr ? '\n\n' : ''}${OPT_OUT_LINE}`;
+  }
+  const hasOptOut = body => /reply\s*["“]?no thanks["”]?/i.test(String(body || ''));
+  function buildEmail(templateId, business, person, extra) {
+    const t = EMAIL_TEMPLATES.find(x => x.id === templateId) || EMAIL_TEMPLATES[0];
+    const vars = emailVars(business, person, extra);
+    let body = fillTemplate(t.body, vars);
+    if (t.outreach) body += complianceFooter(business);
+    return { template: t.id, outreach: t.outreach, to: String((person && person.email) || '').trim(),
+      subject: fillTemplate(t.subject, vars), body, missingAddress: !vars.address };
+  }
+  // Pre-send checks. errors block the send buttons; warnings are shown but can be overridden.
+  function checkEmail(email, business) {
+    email = email || {}; business = business || {};
+    const errors = [], warnings = [];
+    const to = String(email.to || '').trim(), body = String(email.body || '');
+    if (!to) errors.push('No email address yet, copy the text or call instead.');
+    else if (!isEmail(to)) errors.push('That email address does not look right.');
+    if (!String(email.subject || '').trim()) warnings.push('The subject is empty.');
+    if (!body.trim()) errors.push('The email is empty.');
+    const addr = String(business.postal_address || '').trim();
+    if (email.outreach) {
+      if (!addr) warnings.push('Your postal address is missing. Outreach email must include a real postal address (US CAN-SPAM law). Add it in Settings before sending.');
+      else if (!body.includes(addr)) warnings.push('Your postal address is not in this email. Outreach email must include it. Tap "Add footer".');
+      if (!hasOptOut(body)) warnings.push('The opt-out line ("Reply no thanks and I won\'t email you again") is missing. Tap "Add footer".');
+    }
+    if (/\[[^\]\n]{3,}\]/.test(body)) warnings.push('Fill in the [bracketed] part before sending.');
+    return { ok: !errors.length, errors, warnings };
+  }
+  function gmailLink(to, subject, body) {
+    return 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(String(to || '').trim()).replace(/%40/g, '@') +
+      '&su=' + encodeURIComponent(subject || '') + '&body=' + encodeURIComponent(body || '');
+  }
+  function emailLinks(to, subject, body) {
+    const mailto = mailtoLink(to, subject, body), gmail = gmailLink(to, subject, body);
+    return { mailto, gmail, mailtoOk: mailto.length <= MAILTO_MAX, gmailOk: gmail.length <= GMAIL_MAX };
+  }
+  const emailWhen = e => e.sent_at || e.created_at;
+  function emailHistory(emails, ref) {
+    ref = ref || {};
+    return (emails || []).filter(e => (ref.leadId && e.lead_id === ref.leadId) || (ref.customerId && e.customer_id === ref.customerId))
+      .slice().sort((a, b) => new Date(emailWhen(b)) - new Date(emailWhen(a)));
+  }
+  // Has this lead / address already been emailed (or contacted)? Shown before the send buttons.
+  function emailDuplicate(emails, ref) {
+    ref = ref || {};
+    const to = String(ref.to || '').trim().toLowerCase(), lead = ref.lead || null;
+    const sent = (emails || []).filter(e => e.status === 'sent' && e.id !== ref.excludeId &&
+      ((to && String(e.to_email || '').trim().toLowerCase() === to) || (lead && e.lead_id === lead.id) || (ref.customerId && e.customer_id === ref.customerId)))
+      .sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
+    if (sent.length) return { dup: true, kind: 'emailed', date: sent[0].sent_at, email: sent[0], count: sent.length };
+    if (lead && (lead.status === 'contacted' || lead.contacted_at)) return { dup: true, kind: 'contacted', date: lead.contacted_at || lead.updated_at || null };
+    return { dup: false };
+  }
+  // Reply tracking: a lead counts as "Replied" once any sent email to it is marked replied.
+  function replyState(emails, leadId) {
+    const mine = (emails || []).filter(e => e.lead_id === leadId && e.status === 'sent');
+    const replied = mine.filter(e => e.replied_at).sort((a, b) => new Date(b.replied_at) - new Date(a.replied_at));
+    return { sent: mine.length, canMarkReplied: mine.some(e => !e.replied_at), replied: !!replied.length, repliedAt: replied.length ? replied[0].replied_at : null };
+  }
+  // Lead patch after "Yes, I sent it" or "They replied": new -> contacted (quote/won/lost are left alone)
+  function contactedPatch(lead, now) {
+    const p = { status: lead && lead.status === 'new' ? 'contacted' : (lead ? lead.status : 'contacted') };
+    if (!lead || !lead.contacted_at) p.contacted_at = new Date(now || Date.now()).toISOString();
+    return p;
+  }
+
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   return { DAY, LEAD_STATUSES, DOC_STATUSES, DEFAULT_TEMPLATES, STOP_WORDS, round2, isoDate, addDays, parseDay, money, esc,
     docTotals, amountOwed, nextNumber, quoteToInvoice, safePayLink, leadAge, isProspect, linkParts, safeHttpUrl, shortUrl, parseLeadNote, leadNoteSummary, generateAutoTasks, obsoleteAutoTasks, stats,
     fillTemplate, firstName, isStopReply, smsLink, mailtoLink, telLink, mapLink, contactCheck, reviewRequest, reviewStatus,
-    parseCSV, csvCell, toCSV, csvToCustomers, checkConfig, cleanLead };
+    parseCSV, csvCell, toCSV, csvToCustomers, checkConfig, cleanLead,
+    OPT_OUT_LINE, MAILTO_MAX, GMAIL_MAX, EMAIL_TEMPLATES, isEmail, greetingName, emailVars, complianceFooter, hasOptOut, buildEmail, checkEmail,
+    gmailLink, emailLinks, emailHistory, emailDuplicate, replyState, contactedPatch };
 });

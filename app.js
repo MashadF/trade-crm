@@ -181,7 +181,7 @@
     return `<div class="lead-row" data-lead="${h(l.id)}">
       <div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}</div>
       <div class="li-sub">${h(l.service || L.leadNoteSummary(l.message || ''))}${l.source ? ' · ' + h(l.source) : ''}</div></div>
-      <div class="row nowrap">${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">Text</a>` : ''}${!l.phone && l.email ? `<a class="btn sm" href="${h(L.mailtoLink(l.email, 'Your request to ' + B.name, `Hi ${L.firstName(l.name)},\n\nThanks for reaching out to ${B.name}.`))}" data-contact="${h(l.id)}">Email</a>` : ''}</div>
+      <div class="row nowrap">${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">Text</a>` : ''}${!l.phone && l.email ? `<button class="btn sm" data-email-lead="${h(l.id)}">Email</button>` : ''}</div>
     </div>`;
   }
   function taskRow(t) {
@@ -191,6 +191,8 @@
   function bindCommon(root) {
     $$('[data-task]', root).forEach(b => b.onclick = async () => { const t = S.tasks.find(x => x.id === b.dataset.task); await guard(() => store.update('tasks', t.id, { done: !t.done, done_at: t.done ? null : new Date().toISOString() })); rerender(); });
     $$('[data-contact]', root).forEach(a => a.addEventListener('click', () => markContacted(a.dataset.contact)));
+    $$('[data-email-lead]', root).forEach(b => b.addEventListener('click', () => openComposer({ leadId: b.dataset.emailLead })));
+    $$('[data-email-cust]', root).forEach(b => b.addEventListener('click', () => openComposer({ customerId: b.dataset.emailCust })));
     $$('[data-lead]', root).forEach(el => el.addEventListener('click', e => { if (e.target.closest('a,button,select')) return; openLead(el.dataset.lead); }));
   }
   async function markContacted(id) {
@@ -238,24 +240,27 @@
   function renderLeads() {
     const counts = {}; L.LEAD_STATUSES.forEach(s => { counts[s.id] = S.leads.filter(l => l.status === s.id).length; });
     const open = S.leads.filter(l => ['new', 'contacted', 'quote'].includes(l.status));
-    const list = (leadFilter === 'open' ? open : S.leads.filter(l => l.status === leadFilter)).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const replied = S.leads.filter(l => L.replyState(S.emails || [], l.id).replied);
+    const list = (leadFilter === 'open' ? open : leadFilter === 'replied' ? replied : S.leads.filter(l => l.status === leadFilter)).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     view.innerHTML = `
       <div class="page-head"><div><h1>Leads</h1><div class="muted small">Answer within 15 minutes. Most customers hire whoever calls back first.</div></div>
         <div class="row"><button class="btn" id="formLink">Website form link</button><button class="btn primary" id="addLead">+ Add lead</button></div></div>
       <div class="seg wrap" id="seg">
         <button data-f="open" class="${leadFilter === 'open' ? 'on' : ''}">Open <b>${open.length}</b></button>
         ${L.LEAD_STATUSES.map(s => `<button data-f="${s.id}" class="${leadFilter === s.id ? 'on' : ''}">${s.name} <b>${counts[s.id]}</b></button>`).join('')}
+        <button data-f="replied" class="${leadFilter === 'replied' ? 'on' : ''}">Replied <b>${replied.length}</b></button>
       </div>
       <div class="card mt">${list.length ? list.map(l => {
-        const age = L.leadAge(l);
+        const age = L.leadAge(l), rs = L.replyState(S.emails || [], l.id);
         return `<div class="lead" data-lead="${h(l.id)}">
-          <div class="lead-top"><div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}</div>
+          <div class="lead-top"><div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''}${rs.replied ? ` <span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span>` : rs.sent ? ` <span class="chip em-sent">Emailed</span>` : ''}</div>
             <div class="li-sub">${h([l.service, l.address].filter(Boolean).join(' · '))}</div></div>
             <div class="right small muted">${ago(l.created_at)}<br>${h(l.source || '')}</div></div>
           ${l.message ? `<div class="lead-msg" data-note="${h(l.id)}" data-compact></div>` : ''}
           <div class="row mt-s">
             ${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">📞 Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">💬 Text</a>` : ''}
-            ${l.email ? `<a class="btn sm" href="${h(L.mailtoLink(l.email, 'Your request to ' + B.name, `Hi ${L.firstName(l.name)},\n\nThanks for reaching out to ${B.name}.\n`))}" data-contact="${h(l.id)}">✉️ Email</a>` : ''}
+            <button class="btn sm" data-email-lead="${h(l.id)}">✉️ Email</button>
+            ${rs.canMarkReplied ? `<button class="btn sm" data-replied-lead="${h(l.id)}">They replied</button>` : ''}
             <select class="input sm-select" data-status="${h(l.id)}" aria-label="Status">${L.LEAD_STATUSES.map(s => `<option value="${s.id}" ${l.status === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}</select>
             ${l.customer_id ? `<a class="btn sm" href="#/customer/${h(l.customer_id)}">Customer card →</a>` : `<button class="btn sm" data-convert="${h(l.id)}">Make customer</button>`}
             <button class="btn sm" data-quote="${h(l.id)}">Quote</button>
@@ -267,6 +272,7 @@
     $('#addLead').onclick = () => editLead(); $('#formLink').onclick = showFormLink;
     $$('[data-status]').forEach(s => s.onchange = async () => { await guard(() => store.update('leads', s.dataset.status, { status: s.value, contacted_at: S.leads.find(x => x.id === s.dataset.status).contacted_at || (s.value !== 'new' ? new Date().toISOString() : null) }), 'Lead updated'); renderLeads(); });
     $$('[data-convert]').forEach(b => b.onclick = async () => { const c = await convertLead(b.dataset.convert); location.hash = '#/customer/' + c.id; });
+    $$('[data-replied-lead]').forEach(b => b.onclick = async () => { await markLeadReplied(b.dataset.repliedLead); renderLeads(); });
     $$('[data-quote]').forEach(b => b.onclick = async () => { const l = S.leads.find(x => x.id === b.dataset.quote); const c = l.customer_id ? custById(l.customer_id) : await convertLead(l.id); location.hash = '#/doc/new-quote?c=' + c.id + '&lead=' + l.id; });
     bindCommon(view);
   }
@@ -282,14 +288,181 @@
     const l = S.leads.find(x => x.id === id); if (!l) return;
     openModal(l.name, `<dl class="kv"><dt>Status</dt><dd>${statusChip(l.status)}</dd><dt>Phone</dt><dd>${h(l.phone || '—')}</dd><dt>Email</dt><dd>${h(l.email || '—')}</dd><dt>Address</dt><dd>${h(l.address || '—')}</dd>
       <dt>Service</dt><dd>${h(l.service || '—')}</dd><dt>${(() => { const n = L.parseLeadNote(l.message); return n ? 'Notes from ' + n.from : 'Message'; })()}</dt><dd>${l.message ? `<div class="lead-msg detail" data-note="${h(l.id)}"></div>` : '—'}</dd><dt>Source</dt><dd>${h(l.source || '—')}</dd><dt>Received</dt><dd>${fmtDateTime(l.created_at)}</dd>
-      <dt>Text OK?</dt><dd>${l.sms_ok ? 'Yes, ticked on form' : 'Not given'}</dd></dl>
+      <dt>Text OK?</dt><dd>${l.sms_ok ? 'Yes, ticked on form' : 'Not given'}</dd>${(() => { const rs = L.replyState(S.emails || [], l.id); return rs.replied ? `<dt>Replied</dt><dd><span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span></dd>` : ''; })()}</dl>
+      <div class="em-head"><h3>Emails</h3><button class="btn sm primary" id="emailL">✉️ Write email</button></div>
+      ${emailHistoryHtml(L.emailHistory(S.emails || [], { leadId: l.id }))}
       <div class="modal-actions"><button class="btn danger" id="delLead">Delete</button><button class="btn" id="editL">Edit</button>${l.customer_id ? `<a class="btn primary" href="#/customer/${h(l.customer_id)}" data-close>Customer card</a>` : '<button class="btn primary" id="convL">Make customer</button>'}</div>`, m => {
       fillNotes(m);
       $('#delLead', m).onclick = async () => { if (confirm('Delete this lead?')) { await guard(() => store.remove('leads', id), 'Deleted'); closeModal(); rerender(); } };
       $('#editL', m).onclick = () => editLead(l);
+      $('#emailL', m).onclick = () => openComposer({ leadId: id });
+      bindEmailHistory(m, () => { openLead(id); rerender(); });
       const cv = $('#convL', m); if (cv) cv.onclick = async () => { const c = await convertLead(id); closeModal(); location.hash = '#/customer/' + c.id; };
     });
   }
+  /* ---------------- EMAIL (drafted here, sent from the owner's own email app; the CRM never sends) ---------------- */
+  const allEmails = () => (S.emails || []);
+  function emailsForCustomer(cid) {
+    const leadIds = S.leads.filter(l => l.customer_id === cid).map(l => l.id);
+    return allEmails().filter(e => e.customer_id === cid || (e.lead_id && leadIds.includes(e.lead_id)))
+      .sort((a, b) => new Date(b.sent_at || b.created_at) - new Date(a.sent_at || a.created_at));
+  }
+  function emailHistoryHtml(list) {
+    if (!list.length) return '<div class="empty small">No emails yet.</div>';
+    return `<div class="em-hist">${list.map(e => `<div class="em-row">
+      <div class="li-main"><div class="li-title">${h(e.subject || '(no subject)')}</div>
+        <div class="li-sub">${e.status === 'sent' ? `<span class="chip em-sent">Sent ${fmtDate(e.sent_at)}</span>` : '<span class="chip">Draft</span>'}
+          ${e.replied_at ? `<span class="chip em-replied">Replied ${fmtDate(e.replied_at)}</span>` : ''}
+          ${h(e.to_email || 'no address')}${e.source && e.source !== 'CRM' ? ' · ' + h(e.source) : ''}</div></div>
+      <div class="row nowrap">${e.status === 'draft' ? `<button class="btn sm" data-em-open="${h(e.id)}">Open draft</button>` : `<button class="btn sm" data-em-view="${h(e.id)}">View</button>`}
+        ${e.status === 'sent' && !e.replied_at ? `<button class="btn sm" data-em-replied="${h(e.id)}">They replied</button>` : ''}</div></div>`).join('')}</div>`;
+  }
+  function bindEmailHistory(root, after) {
+    $$('[data-em-open]', root).forEach(b => b.onclick = () => { const e = allEmails().find(x => x.id === b.dataset.emOpen); if (e) openComposer({ leadId: e.lead_id, customerId: e.customer_id, draftId: e.id }); });
+    $$('[data-em-view]', root).forEach(b => b.onclick = () => viewEmail(b.dataset.emView));
+    $$('[data-em-replied]', root).forEach(b => b.onclick = async () => { await markReplied(b.dataset.emReplied); if (after) after(); });
+  }
+  function viewEmail(id) {
+    const e = allEmails().find(x => x.id === id); if (!e) return;
+    openModal('Sent email', `<dl class="kv"><dt>To</dt><dd>${h(e.to_email || '—')}</dd><dt>Sent</dt><dd>${fmtDateTime(e.sent_at)}</dd>${e.replied_at ? `<dt>Replied</dt><dd>${fmtDateTime(e.replied_at)}</dd>` : ''}<dt>Subject</dt><dd>${h(e.subject || '')}</dd></dl>
+      <div class="msg-preview pre">${h(e.body || '')}</div>
+      <div class="modal-actions">${e.lead_id ? '<button class="btn" id="back">Back to lead</button>' : ''}<button class="btn" data-close>Close</button></div>`, m => {
+      const b = $('#back', m); if (b) b.onclick = () => openLead(e.lead_id);
+    });
+  }
+  // "They replied": stamp replied_at on that email, move a New lead to Contacted (Quote/Won/Lost stay as they are)
+  async function markReplied(emailId) {
+    const e = allEmails().find(x => x.id === emailId); if (!e || e.replied_at) return;
+    const now = new Date().toISOString();
+    await guard(() => store.update('emails', e.id, { replied_at: now }), 'Marked as replied');
+    const l = e.lead_id && S.leads.find(x => x.id === e.lead_id);
+    if (l && (l.status === 'new' || !l.contacted_at)) await guard(() => store.update('leads', l.id, L.contactedPatch(l, now)));
+  }
+  async function markLeadReplied(leadId) {
+    const e = allEmails().filter(x => x.lead_id === leadId && x.status === 'sent' && !x.replied_at).sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at))[0];
+    if (e) await markReplied(e.id);
+  }
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
+    return Promise.resolve(fallbackCopy(text));
+  }
+  function fallbackCopy(text) {
+    const t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } t.remove(); return ok;
+  }
+  function openLink(href, newTab) {   // URLs are set as a DOM property, never pasted into HTML
+    const a = document.createElement('a'); a.href = href; if (newTab) { a.target = '_blank'; a.rel = 'noopener'; }
+    window.__crmLastEmailLink = href; document.body.appendChild(a); a.click(); a.remove();
+  }
+  // ref = { leadId } | { customerId } | { draftId, leadId?, customerId? }
+  function openComposer(ref) {
+    ref = ref || {};
+    const draft = ref.draftId ? allEmails().find(x => x.id === ref.draftId) : null;
+    const lead = S.leads.find(x => x.id === (ref.leadId || (draft && draft.lead_id)));
+    const cust = custById(ref.customerId || (draft && draft.customer_id) || (lead && lead.customer_id));
+    const person = lead || cust; if (!person) return;
+    const optedOut = !!(cust && cust.opted_out);
+    const drafts = allEmails().filter(e => e.status === 'draft' && ((lead && e.lead_id === lead.id) || (!lead && cust && e.customer_id === cust.id)));
+    const firstDraft = draft || null;
+    const defTpl = cust && !lead ? 'thanks' : (lead && lead.status === 'quote' ? 'quote' : (allEmails().some(e => e.status === 'sent' && lead && e.lead_id === lead.id) ? 'followup' : 'intro'));
+    const quoteDoc = cust && S.documents.filter(d => d.customer_id === cust.id && d.kind === 'quote' && d.status !== 'draft').sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+    const extra = { service: person.service, quoteLink: quoteDoc && quoteDoc.share_token ? docLink(quoteDoc) : '' };
+    let state = { draftId: firstDraft ? firstDraft.id : null, template: firstDraft ? (firstDraft.template || 'intro') : defTpl, outreach: true, dirty: false, ackDup: false };
+    openModal('Email ' + person.name, `
+      <div id="emDup"></div>
+      ${optedOut ? '<div class="notice bad small"><b>This customer opted out.</b> Do not email them marketing or review requests.</div>' : ''}
+      <div class="field"><label for="emTpl">Template</label><select class="input" id="emTpl">
+        ${drafts.length ? `<optgroup label="Saved drafts">${drafts.map(d => `<option value="draft:${h(d.id)}">Draft · ${h(fmtDate(d.created_at))}${d.source && d.source !== 'CRM' ? ' · ' + h(d.source) : ''}</option>`).join('')}</optgroup>` : ''}
+        <optgroup label="Templates">${L.EMAIL_TEMPLATES.map(t => `<option value="${t.id}">${h(t.name)}</option>`).join('')}</optgroup></select></div>
+      <div class="field"><label for="emTo">To</label><input class="input" id="emTo" type="email" inputmode="email" autocomplete="off" maxlength="320" placeholder="name@example.com"></div>
+      <div class="field"><label for="emSubject">Subject</label><input class="input" id="emSubject" maxlength="500"></div>
+      <div class="field"><label for="emBody">Message</label><textarea class="input em-body" id="emBody" rows="9" maxlength="20000"></textarea></div>
+      <div id="emChecks"></div>
+      <div id="emSend" class="em-send">
+        <button class="btn primary" id="emMailto">✉️ Open in my email app</button>
+        <button class="btn" id="emGmail">Open in Gmail</button>
+        <button class="btn" id="emCopy">📋 Copy email</button>
+      </div>
+      <div id="emConfirm" class="em-confirm" hidden><b>Did you send it?</b><div class="row"><button class="btn primary" id="emSent">Yes, I sent it</button><button class="btn" id="emNotYet">Not yet</button></div></div>
+      <p class="small muted">The CRM never sends email by itself. These buttons open your own email app or Gmail with the email filled in. Drafting works offline; saving needs a connection.</p>
+      <div class="modal-actions">${lead ? '<button class="btn" id="emBack">Back to lead</button>' : '<button class="btn" data-close>Close</button>'}<button class="btn" id="emSave">Save draft</button></div>`, m => {
+      const to = $('#emTo', m), subj = $('#emSubject', m), body = $('#emBody', m), tpl = $('#emTpl', m);
+      const fill = (t) => {
+        if (String(t).startsWith('draft:')) {
+          const d = allEmails().find(x => x.id === t.slice(6)); if (!d) return;
+          state.draftId = d.id; state.template = d.template || 'intro';
+          to.value = d.to_email || person.email || ''; subj.value = d.subject || ''; body.value = d.body || '';
+        } else {
+          const e = L.buildEmail(t, B, person, extra);
+          state.template = t; to.value = to.value || person.email || ''; subj.value = e.subject; body.value = e.body;
+        }
+        const def = L.EMAIL_TEMPLATES.find(x => x.id === state.template); state.outreach = def ? def.outreach : true;
+        state.dirty = false; refresh();
+      };
+      const current = () => ({ to: to.value.trim(), subject: subj.value, body: body.value, outreach: state.outreach });
+      function refresh() {
+        const cur = current();
+        const dup = L.emailDuplicate(allEmails(), { lead, to: cur.to, customerId: lead ? null : cust && cust.id, excludeId: state.draftId });
+        const dupBox = $('#emDup', m); dupBox.innerHTML = '';
+        if (dup.dup && !state.ackDup) {
+          dupBox.innerHTML = `<div class="notice bad em-dup"><b>⚠️ ${dup.kind === 'emailed' ? `You already emailed this ${lead ? 'lead' : 'address'} on ${h(fmtDate(dup.date) || 'an earlier date')}` : `This lead is already marked Contacted${dup.date ? ' (' + h(fmtDate(dup.date)) + ')' : ''}`}.</b>
+            <div class="small">Check your email history before sending again.</div><button class="btn sm mt-s" id="emDupOk">Show send options anyway</button></div>`;
+          $('#emDupOk', m).onclick = () => { state.ackDup = true; refresh(); };
+        }
+        const chk = L.checkEmail(cur, B);
+        const links = L.emailLinks(cur.to, cur.subject, cur.body);
+        const needFooter = cur.outreach && (!L.hasOptOut(cur.body) || (B.postal_address && !cur.body.includes(String(B.postal_address).trim())));
+        const box = $('#emChecks', m);
+        box.innerHTML = `${chk.errors.map(x => `<div class="notice bad small">${h(x)}</div>`).join('')}${chk.warnings.map(x => `<div class="notice warn small">${h(x)}${/postal address is missing/.test(x) ? ' <a href="#/settings" data-close>Open Settings</a>' : ''}</div>`).join('')}
+          ${needFooter ? '<button class="btn sm" id="emFooter">Add footer (address + opt-out line)</button>' : ''}
+          ${chk.ok && !links.mailtoOk ? '<div class="small muted">This email is too long for an email-app link. Use Gmail or Copy instead.</div>' : ''}`;
+        const fb = $('#emFooter', m); if (fb) fb.onclick = () => { body.value = body.value.replace(/\s+$/, '') + L.complianceFooter(B); state.dirty = true; refresh(); };
+        const sendBox = $('#emSend', m);
+        sendBox.hidden = optedOut || (dup.dup && !state.ackDup);
+        $('#emMailto', m).disabled = !chk.ok || !links.mailtoOk;
+        $('#emGmail', m).disabled = !chk.ok || !links.gmailOk;
+        $('#emCopy', m).disabled = !cur.body.trim();
+        return { chk, links };
+      }
+      const confirmWarnings = (chk) => {
+        const serious = chk.warnings.filter(w => /postal address|opt-out|bracketed/.test(w));
+        return !serious.length || confirm(serious.join('\n\n') + '\n\nSend anyway?');
+      };
+      const showConfirm = () => { $('#emConfirm', m).hidden = false; $('#emConfirm', m).scrollIntoView({ block: 'nearest' }); };
+      tpl.onchange = () => { if (state.dirty && !confirm('Replace what you wrote with this template?')) { tpl.value = state.draftId ? 'draft:' + state.draftId : state.template; return; } fill(tpl.value); };
+      [to, subj, body].forEach(el => el.addEventListener('input', () => { state.dirty = true; refresh(); }));
+      $('#emMailto', m).onclick = () => { const { chk, links } = refresh(); if (!chk.ok || !links.mailtoOk || !confirmWarnings(chk)) return; openLink(links.mailto, false); showConfirm(); };
+      $('#emGmail', m).onclick = () => { const { chk, links } = refresh(); if (!chk.ok || !links.gmailOk || !confirmWarnings(chk)) return; openLink(links.gmail, true); showConfirm(); };
+      $('#emCopy', m).onclick = async () => {
+        const cur = current(); const ok = await copyText(`To: ${cur.to}\nSubject: ${cur.subject}\n\n${cur.body}`);
+        toast(ok ? 'Email copied. Paste it into your email app.' : 'Could not copy. Select the text and copy it by hand.'); if (cur.to) showConfirm();
+      };
+      $('#emNotYet', m).onclick = () => { $('#emConfirm', m).hidden = true; };
+      const rowNow = (status) => {
+        const cur = current();
+        return { lead_id: lead ? lead.id : null, customer_id: lead ? (lead.customer_id || null) : cust.id, to_email: cur.to || null, subject: cur.subject, body: cur.body,
+          template: state.template, status, sent_at: status === 'sent' ? new Date().toISOString() : null };
+      };
+      const back = () => { if (lead) openLead(lead.id); else { closeModal(); rerender(); } };
+      $('#emSent', m).onclick = async () => {
+        const row = rowNow('sent');
+        if (state.draftId) await guard(() => store.update('emails', state.draftId, row));
+        else await guard(() => store.insert('emails', Object.assign(row, { source: 'CRM' })));
+        if (lead) await guard(() => store.update('leads', lead.id, L.contactedPatch(S.leads.find(x => x.id === lead.id) || lead)));
+        toast('Logged as sent'); state.dirty = false; back(); if (!lead) return; rerenderSoon();
+      };
+      $('#emSave', m).onclick = async () => {
+        const row = rowNow('draft');
+        if (state.draftId) await guard(() => store.update('emails', state.draftId, row), 'Draft saved');
+        else { const n = await guard(() => store.insert('emails', Object.assign(row, { source: 'CRM' })), 'Draft saved'); state.draftId = n && n.id; }
+        state.dirty = false; back(); rerenderSoon();
+      };
+      const bk = $('#emBack', m); if (bk) bk.onclick = () => { if (state.dirty && !confirm('Leave without saving this email?')) return; back(); };
+      tpl.value = state.draftId ? 'draft:' + state.draftId : state.template;
+      fill(tpl.value);
+    });
+  }
+  const rerenderSoon = () => setTimeout(rerender, 50);
   function editLead(l) {
     l = l || {};
     openModal(l.id ? 'Edit lead' : 'Add a lead', `<form id="f">
@@ -335,7 +508,7 @@
     const cls = small ? 'btn sm' : 'btn';
     return `${c.phone ? `<a class="${cls}" href="${h(L.telLink(c.phone))}">📞 Call</a><a class="${cls}" href="${h(L.smsLink(c.phone, ''))}">💬 Text</a>` : ''}
       ${c.address ? `<a class="${cls}" href="${h(L.mapLink(c.address))}" target="_blank" rel="noopener">📍 Map</a>` : ''}
-      ${c.email ? `<a class="${cls}" href="${h(L.mailtoLink(c.email, '', ''))}">✉️ Email</a>` : ''}`;
+      ${c.email ? `<button class="${cls}" data-email-cust="${h(c.id)}">✉️ Email</button>` : ''}`;
   }
   function renderCustomers() {
     const q = custQuery.toLowerCase();
@@ -354,6 +527,7 @@
     const qi = $('#q'); qi.oninput = () => { custQuery = qi.value; const pos = qi.selectionStart; renderCustomers(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
     $('#addC').onclick = () => editCustomer();
     $$('[data-c]').forEach(el => el.onclick = e => { if (e.target.closest('a,button')) return; location.hash = '#/customer/' + el.dataset.c; });
+    $$('[data-email-cust]').forEach(b => b.onclick = () => openComposer({ customerId: b.dataset.emailCust }));
   }
   function editCustomer(c) {
     c = c || {};
@@ -430,12 +604,15 @@
           <div class="card"><div class="card-head"><h2>Quotes & invoices</h2><div class="row"><a class="btn sm" href="#/doc/new-quote?c=${h(id)}">+ Quote</a><a class="btn sm" href="#/doc/new-invoice?c=${h(id)}">+ Invoice</a></div></div>
             ${docs.length ? `<div class="table-wrap"><table class="ctable"><tbody>${docs.map(d => `<tr data-doc="${h(d.id)}"><td><b>${h(d.number)}</b> <span class="muted small">${d.kind === 'quote' ? 'Quote' : 'Invoice'}</span></td><td>${fmtDate(d.created_at)}</td><td>${statusChip(d.status)}</td><td class="num">${money(L.docTotals(d).total)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty small">None yet.</div>'}
           </div>
+          <div class="card" id="custEmails"><div class="card-head"><h2>Emails</h2><button class="btn sm primary" id="emailC">✉️ Write email</button></div>${emailHistoryHtml(emailsForCustomer(id))}</div>
           <div class="card"><div class="card-head"><h2>Tasks</h2><button class="btn sm" id="addT">+ Task</button></div>${tasks.length ? tasks.map(taskRow).join('') : '<div class="empty small">No open tasks.</div>'}</div>
         </div>
       </div>`;
     $('#editC').onclick = () => editCustomer(c);
     $('#addJob').onclick = () => editJob(null, id);
     $('#addT').onclick = () => editTask(null, id);
+    $('#emailC').onclick = () => openComposer({ customerId: id });
+    bindEmailHistory($('#custEmails'), rerender);
     $$('[data-editjob]').forEach(b => b.onclick = () => editJob(S.jobs.find(j => j.id === b.dataset.editjob), id));
     $$('[data-doc]').forEach(r => r.onclick = () => { location.hash = '#/doc/' + r.dataset.doc; });
     $$('[data-photo]').forEach(inp => inp.onchange = () => addPhotos(inp.dataset.photo, Array.from(inp.files)));

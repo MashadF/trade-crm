@@ -234,6 +234,44 @@ begin
   end loop;
 end $$;
 
+-- ---------- Email log (drafts + emails the owner says they sent) ----------
+-- The CRM never sends email itself: it opens the owner's own email app / Gmail, then logs it when
+-- the owner taps "Yes, I sent it". Same strict per-business RLS as every other table.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'leads_business_id_id_key' and conrelid = 'public.leads'::regclass) then
+    alter table public.leads add constraint leads_business_id_id_key unique (business_id, id);
+  end if;
+end $$;
+create table if not exists public.emails (
+  id          uuid primary key default gen_random_uuid(),
+  business_id uuid not null default public.my_business_id() references public.businesses(id) on delete cascade,
+  lead_id     uuid,
+  customer_id uuid,
+  to_email    text check (char_length(to_email) <= 320),
+  subject     text check (char_length(subject) <= 500),
+  body        text check (char_length(body) <= 20000),
+  template    text check (char_length(template) <= 40),
+  source      text check (char_length(source) <= 80),      -- e.g. 'CRM', 'Rex draft'
+  status      text not null default 'draft' check (status in ('draft','sent')),
+  sent_at     timestamptz,
+  replied_at  timestamptz,                                   -- owner tapped "They replied"
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  check (lead_id is not null or customer_id is not null),
+  check (status = 'draft' or sent_at is not null),
+  foreign key (business_id, lead_id) references public.leads (business_id, id) on delete cascade,
+  foreign key (business_id, customer_id) references public.customers (business_id, id) on delete cascade
+);
+create index if not exists emails_biz on public.emails(business_id, created_at desc);
+create index if not exists emails_lead on public.emails(business_id, lead_id);
+create index if not exists emails_customer on public.emails(business_id, customer_id);
+alter table public.emails enable row level security;
+revoke all on public.emails from anon, authenticated;
+grant select, insert, update, delete on public.emails to authenticated;
+drop policy if exists emails_member_all on public.emails;
+create policy emails_member_all on public.emails for all to authenticated
+  using (public.is_member(business_id)) with check (public.is_member(business_id));
+
 -- ---------- Public lead form (anon, insert only) ----------
 create or replace function public.lead_form_open(b uuid) returns boolean
 language sql stable security definer set search_path = public as $$
