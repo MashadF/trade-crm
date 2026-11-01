@@ -354,3 +354,15 @@ create policy job_photos_update on storage.objects for update to authenticated
 drop policy if exists job_photos_delete on storage.objects;
 create policy job_photos_delete on storage.objects for delete to authenticated
   using (bucket_id = 'job-photos' and (storage.foldername(name))[1] = public.my_business_id()::text);
+
+-- ---------- v2.8: saved services and prices (additive, safe to re-run) ----------
+-- A short list the owner picks from when building a quote or invoice: [{id, name, price, note}].
+-- Lives on the business row, so the existing strict business policies (members only) cover it.
+-- Not returned by get_public_document, so customers never see the price list.
+alter table public.businesses add column if not exists services jsonb not null default '[]'::jsonb;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'businesses_services_shape' and conrelid = 'public.businesses'::regclass) then
+    alter table public.businesses add constraint businesses_services_shape check (
+      case when jsonb_typeof(services) = 'array' then jsonb_array_length(services) <= 200 and octet_length(services::text) <= 60000 else false end);
+  end if;
+end $$;

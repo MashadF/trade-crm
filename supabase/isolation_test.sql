@@ -202,6 +202,40 @@ begin
 end $$;
 reset role;
 
+-- 9c. Saved services and prices: private to the business (v2.8)
+do $$
+declare n int; ok boolean := false;
+begin
+  perform pg_temp.login('aaaaaaaa-0000-0000-0000-00000000000a');
+  update public.businesses set services = '[{"id":"s1","name":"Mount TV","price":149,"note":"secret price list"}]'::jsonb where id = 'a1a1a1a1-0000-0000-0000-000000000001';
+  get diagnostics n = row_count; if n <> 1 then raise exception 'FAIL 9c-a: A could not save its services'; end if;
+  begin update public.businesses set services = '{"not":"a list"}'::jsonb where id = 'a1a1a1a1-0000-0000-0000-000000000001'; exception when check_violation then ok := true; end;
+  if not ok then raise exception 'FAIL 9c-b: services accepted a non-list'; end if;
+  perform set_config('role', 'none', true);
+end $$;
+reset role;
+do $$
+declare n int; t text;
+begin
+  perform pg_temp.login('bbbbbbbb-0000-0000-0000-00000000000b');
+  select count(*) into n from public.businesses where services::text like '%secret price list%';
+  if n <> 0 then raise exception 'FAIL 9c-c: B can read A services'; end if;
+  update public.businesses set services = '[]'::jsonb where id = 'a1a1a1a1-0000-0000-0000-000000000001';
+  get diagnostics n = row_count; if n <> 0 then raise exception 'FAIL 9c-d: B changed A services'; end if;
+  perform set_config('role', 'none', true);
+  perform pg_temp.as_anon();
+  select public.get_public_document('a4a4a4a4-0000-0000-0000-000000000001')::text into t;
+  if t like '%secret price list%' or t like '%services%' then raise exception 'FAIL 9c-e: public quote link leaks the services list'; end if;
+  perform set_config('role', 'none', true);
+end $$;
+reset role;
+do $$
+declare n int;
+begin
+  select count(*) into n from public.businesses where id = 'a1a1a1a1-0000-0000-0000-000000000001' and services->0->>'note' = 'secret price list';
+  if n <> 1 then raise exception 'FAIL 9c-f: A services not kept'; end if;
+end $$;
+
 -- 10. Deleting a business (delete-my-data) removes all its rows and nobody else's
 do $$
 declare n int;

@@ -187,13 +187,57 @@
   window.addEventListener('hashchange', route);
   const rerender = () => route();
 
+  /* ---------------- TEXTS (v2.8): templates only OPEN the phone's texting app; the CRM never sends ---------------- */
+  // A lead's texting rules follow the customer card it was turned into (opted out there = blocked here too).
+  function leadPerson(l) { const c = l.customer_id ? custById(l.customer_id) : null; return c ? Object.assign({}, l, { opted_out: !!c.opted_out, sms_ok: !!(l.sms_ok || c.sms_ok) }) : l; }
+  // One tap: opens Messages with "Thanks, can I call you?" filled in. "⋯" opens the other texts.
+  function replyLink(l, label) {
+    const p = leadPerson(l), chk = L.textCheck(p);
+    const more = `<button class="btn sm more-texts" data-texts-lead="${h(l.id)}" aria-label="More texts for ${h(l.name)}" title="More texts">⋯</button>`;
+    if (!chk.ok) return `<button class="btn sm" data-texts-lead="${h(l.id)}" title="${h(chk.reason)}">${label}</button>`;
+    const t = L.buildText(L.isProspect(l) ? 'missed_call' : 'thanks_call', B, p, { service: l.service });
+    return `<a class="btn sm" href="${h(L.smsLink(l.phone, t.body))}" data-contact="${h(l.id)}" data-onetap="${h(t.id)}">${label}</a>${more}`;
+  }
+  function textDialog(ctx) {
+    const lead = ctx.leadId ? S.leads.find(x => x.id === ctx.leadId) : null;
+    const job = ctx.jobId ? S.jobs.find(x => x.id === ctx.jobId) : null;
+    const cust = ctx.customerId ? custById(ctx.customerId) : job ? custById(job.customer_id) : null;
+    const person = lead ? leadPerson(lead) : cust; if (!person) return;
+    const nextJob = job || (cust ? S.jobs.filter(j => j.customer_id === cust.id && j.status === 'scheduled' && j.date >= todayISO()).sort((a, b) => a.date < b.date ? -1 : 1)[0] : null);
+    const extra = { job: nextJob || null, service: lead ? lead.service : '' };
+    const chk = L.textCheck(person);
+    let cur = ctx.template || L.suggestText({ lead, job: nextJob }), body = (L.buildText(cur, B, person, extra) || {}).body || '';
+    const order = lead ? ['thanks_call', 'missed_call', 'on_my_way', 'reminder', 'job_done'] : ['on_my_way', 'reminder', 'job_done', 'thanks_call', 'missed_call'];
+    openModal('Text ' + (person.name || ''), `
+      ${chk.ok ? '' : `<div class="notice bad small">${h(chk.reason)}</div>`}
+      ${chk.ok && chk.warn ? `<div class="notice warn small">${h(chk.warn)}</div>` : ''}
+      ${lead && L.isProspect(lead) ? `<div class="notice warn small">This business was found by ${h(L.leadBots(lead).join(' / ') || 'a lead bot')}. They haven't contacted you, so edit the text to fit before you send it.</div>` : ''}
+      <div class="tpl-pick" id="tplPick" role="group" aria-label="Pick a text">${order.map(id => { const t = L.textTemplate(id); return `<button type="button" class="tpl-btn ${id === cur ? 'on' : ''}" data-tpl="${id}" aria-pressed="${id === cur}">${h(t.name)}</button>`; }).join('')}</div>
+      <div class="field"><label for="txtBody">Message (you can change it)</label><textarea class="input" id="txtBody" rows="5" maxlength="900">${h(body)}</textarea>
+        <span class="small muted" id="txtCount"></span></div>
+      ${!B.name || B.name === 'My Business' ? '<div class="notice warn small">Add your business name in <a href="#/settings" data-close>Settings</a> so customers know who is texting.</div>' : ''}
+      <p class="small muted">Tapping the button opens your phone's texting app with this filled in. You press send. Nothing is sent from the CRM.</p>
+      <div class="modal-actions"><button class="btn" data-close>Cancel</button>${chk.ok ? `<a class="btn primary" id="txtGo" href="#">Open in Messages</a>` : ''}</div>`, m => {
+      const ta = $('#txtBody', m), go = $('#txtGo', m), cnt = $('#txtCount', m);
+      const refresh = () => { body = ta.value; cnt.textContent = body.length + ' characters' + (body.length > 160 ? ' (may arrive as 2+ texts)' : ''); if (go) go.href = L.smsLink(person.phone, body); };
+      $$('[data-tpl]', m).forEach(b => b.onclick = () => { cur = b.dataset.tpl; ta.value = L.buildText(cur, B, person, extra).body; $$('[data-tpl]', m).forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); refresh(); });
+      ta.addEventListener('input', refresh); refresh();
+      if (go) go.addEventListener('click', () => { if (lead) markContacted(lead.id); setTimeout(closeModal, 50); });
+    });
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-texts-lead],[data-texts-cust],[data-texts-job]'); if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    textDialog({ leadId: b.dataset.textsLead, customerId: b.dataset.textsCust, jobId: b.dataset.textsJob });
+  });
+
   /* ---------------- TODAY ---------------- */
   function leadRow(l) {
     const age = L.leadAge(l);
     return `<div class="lead-row" data-lead="${h(l.id)}">
       <div class="li-main"><div class="li-title">${h(l.name)} ${age.level !== 'none' ? `<span class="age age-${age.level}">${h(age.label)}</span>` : ''} ${noEmailBadge(l)}</div>
       <div class="li-sub">${L.leadBots(l).length ? botBadges(l) + ' ' : ''}${h(l.service || L.leadNoteSummary(l.message || ''))}${l.source && !L.leadBots(l).length ? ' · ' + h(l.source) : ''}</div></div>
-      <div class="row nowrap">${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">Text</a>` : ''}${!l.phone && l.email ? `<button class="btn sm" data-email-lead="${h(l.id)}">Email</button>` : ''}</div>
+      <div class="row nowrap">${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">Call</a>${replyLink(l, 'Text')}` : ''}${!l.phone && l.email ? `<button class="btn sm" data-email-lead="${h(l.id)}">Email</button>` : ''}</div>
     </div>`;
   }
   function taskRow(t) {
@@ -213,7 +257,7 @@
     setTimeout(rerender, 300);
   }
   function renderToday() {
-    const st = L.stats(S), t = todayISO();
+    const t = todayISO();
     const fresh = S.leads.filter(l => l.status === 'new').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     const tasks = S.tasks.filter(x => !x.done && (!x.due || x.due <= L.isoDate(L.addDays(new Date(), 2)))).sort((a, b) => (a.due || '9') < (b.due || '9') ? -1 : 1);
     const jobsToday = S.jobs.filter(j => j.date === t && j.status !== 'canceled');
@@ -223,12 +267,7 @@
       ${B.example ? `<div class="notice warn">You're looking at <b>example data</b> for a made-up business. Clear it in <a href="#/settings">Settings</a> before adding real customers.</div>` : ''}
       <div class="page-head"><div><h1>${hello}</h1><div class="muted">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
         <div class="row"><button class="btn" id="addLead">+ Lead</button><button class="btn" id="addTask">+ Task</button><a class="btn primary" href="#/doc/new-quote">+ Quote</a></div></div>
-      <div class="stats">
-        <a class="card stat accent" href="#/leads"><div class="label">New leads this week</div><div class="value">${st.newLeadsWeek}</div><div class="hint">${st.untouchedLeads ? st.untouchedLeads + ' waiting for a reply' : 'All answered'}</div></a>
-        <a class="card stat" href="#/money"><div class="label">Money owed</div><div class="value">${money(st.moneyOwed)}</div><div class="hint">Unpaid invoices</div></a>
-        <a class="card stat" href="#/money"><div class="label">Quotes won (30 days)</div><div class="value">${st.quotesWon30} of ${st.quotesSent30}</div><div class="hint">${money(st.quotesWonValue30)} won</div></a>
-        <div class="card stat"><div class="label">Jobs today</div><div class="value">${jobsToday.length}</div><div class="hint">${upcoming.length} more this week</div></div>
-      </div>
+      ${howCard(L.howAmIDoing(S))}
       <div class="grid2">
         <div class="card"><div class="card-head"><h2>New leads</h2><a href="#/leads" class="small">Lead inbox →</a></div>
           ${(() => { const c = L.leadSourceCounts(fresh); return c.rex || c.webster ? `<div class="src-split small muted" id="srcSplit">New from: <button class="linkish" data-src-go="rex">Rex <b>${c.rex}</b></button> · <button class="linkish" data-src-go="webster">Webster <b>${c.webster}</b></button> · <button class="linkish" data-src-go="own">My own <b>${c.own}</b></button></div>` : ''; })()}
@@ -247,9 +286,23 @@
   }
   function jobLine(j) {
     const c = custById(j.customer_id) || {};
-    return `<a class="list-item" href="#/customer/${h(j.customer_id)}"><div class="avatar">${h(initials(c.name))}</div>
+    return `<div class="list-item job-line"><a class="li-link" href="#/customer/${h(j.customer_id)}"><div class="avatar">${h(initials(c.name))}</div>
       <div class="li-main"><div class="li-title">${h(j.title)} <span class="muted">· ${h(c.name || '')}</span></div><div class="li-sub">${h(c.address || '')}</div></div>
-      <div class="right"><div class="strong">${j.price ? money(j.price) : ''}</div><div class="small muted">${fmtDate(j.date)}</div></div></a>`;
+      <div class="right"><div class="strong">${j.price ? money(j.price) : ''}</div><div class="small muted">${fmtDate(j.date)}</div></div></a>
+      ${c.phone ? `<button class="btn sm" data-texts-job="${h(j.id)}" aria-label="Text ${h(c.name || '')}">💬 Text</button>` : ''}</div>`;
+  }
+  // "How am I doing": six plain numbers, each one tap from the list behind it.
+  function howCard(k) {
+    const tile = (id, href, label, value, hint, cls) => `<a class="how-tile ${cls || ''}" href="${href}" data-how="${id}"><div class="how-val">${value}</div><div class="how-label">${label}</div>${hint ? `<div class="how-hint">${hint}</div>` : ''}</a>`;
+    return `<section class="card how" id="howCard" aria-labelledby="howTitle"><div class="card-head"><h2 id="howTitle">How am I doing</h2><span class="small muted">Right now</span></div>
+      <div class="how-grid">
+        ${tile('new', '#/leads', 'New leads', k.newLeads, k.newLeads ? 'Not handled yet' : 'None right now')}
+        ${tile('waiting', '#/leads', 'Waiting for your reply', k.waitingReply, k.waitingReply ? 'Call or text them back' : 'All caught up', k.waitingReply ? 'alert' : 'good')}
+        ${tile('quotes', '#/money', 'Quotes waiting on a yes', k.quotesWaiting, k.quotesWaiting ? money(k.quotesWaitingValue) + ' total' : 'None out')}
+        ${tile('owed', '#/money', 'Money owed to you', money(k.moneyOwed), k.moneyOwedCount ? k.moneyOwedCount + ' unpaid invoice' + (k.moneyOwedCount === 1 ? '' : 's') : 'Nothing owed', k.moneyOwed ? 'alert' : '')}
+        ${tile('jobs', '#/customers', 'Jobs this week', k.jobsThisWeek, 'Today + next 6 days')}
+        ${tile('collected', '#/money', 'Money collected in ' + h(k.monthName), money(k.collectedThisMonth), k.collectedCount ? k.collectedCount + ' paid invoice' + (k.collectedCount === 1 ? '' : 's') : 'Nothing paid yet', 'good')}
+      </div></section>`;
   }
 
   /* ---------------- LEADS ---------------- */
@@ -283,7 +336,7 @@
             <div class="right small muted">${ago(l.created_at)}<br>${h(l.source || '')}</div></div>
           ${l.message ? `<div class="lead-msg" data-note="${h(l.id)}" data-compact></div>` : ''}
           <div class="row mt-s">
-            ${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">📞 Call</a><a class="btn sm" href="${h(L.smsLink(l.phone, `Hi ${L.firstName(l.name)}, this is ${B.name}. Thanks for reaching out about ${l.service || 'your project'}!`))}" data-contact="${h(l.id)}">💬 Text</a>` : ''}
+            ${l.phone ? `<a class="btn sm" href="${h(L.telLink(l.phone))}" data-contact="${h(l.id)}">📞 Call</a>${replyLink(l, '💬 Text')}` : ''}
             <button class="btn sm" data-email-lead="${h(l.id)}">✉️ Email</button>
             ${rs.canMarkReplied ? `<button class="btn sm" data-replied-lead="${h(l.id)}">They replied</button>` : ''}
             <select class="input sm-select" data-status="${h(l.id)}" aria-label="Status">${L.LEAD_STATUSES.map(s => `<option value="${s.id}" ${l.status === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}</select>
@@ -320,7 +373,7 @@
       <dt>Text OK?</dt><dd>${l.sms_ok ? 'Yes, ticked on form' : 'Not given'}</dd>${(() => { const rs = L.replyState(S.emails || [], l.id); return rs.replied ? `<dt>Replied</dt><dd><span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span></dd>` : ''; })()}</dl>
       <div class="em-head"><h3>Emails</h3><button class="btn sm primary" id="emailL">✉️ Write email</button></div>
       ${emailHistoryHtml(L.emailHistory(S.emails || [], { leadId: l.id }))}
-      <div class="modal-actions"><button class="btn danger" id="delLead">Delete</button><button class="btn" id="editL">Edit</button>${l.customer_id ? `<a class="btn primary" href="#/customer/${h(l.customer_id)}" data-close>Customer card</a>` : '<button class="btn primary" id="convL">Make customer</button>'}</div>`, m => {
+      <div class="modal-actions"><button class="btn danger" id="delLead">Delete</button>${l.phone ? `<button class="btn" data-texts-lead="${h(l.id)}">💬 Text</button>` : ''}<button class="btn" id="editL">Edit</button>${l.customer_id ? `<a class="btn primary" href="#/customer/${h(l.customer_id)}" data-close>Customer card</a>` : '<button class="btn primary" id="convL">Make customer</button>'}</div>`, m => {
       fillNotes(m);
       $('#delLead', m).onclick = async () => { if (confirm('Delete this lead?')) { await guard(() => store.remove('leads', id), 'Deleted'); closeModal(); rerender(); } };
       $('#editL', m).onclick = () => editLead(l);
@@ -535,7 +588,7 @@
   /* ---------------- CUSTOMERS ---------------- */
   function quickLinks(c, small) {
     const cls = small ? 'btn sm' : 'btn';
-    return `${c.phone ? `<a class="${cls}" href="${h(L.telLink(c.phone))}">📞 Call</a><a class="${cls}" href="${h(L.smsLink(c.phone, ''))}">💬 Text</a>` : ''}
+    return `${c.phone ? `<a class="${cls}" href="${h(L.telLink(c.phone))}">📞 Call</a><button class="${cls}" data-texts-cust="${h(c.id)}">💬 Text</button>` : ''}
       ${c.address ? `<a class="${cls}" href="${h(L.mapLink(c.address))}" target="_blank" rel="noopener">📍 Map</a>` : ''}
       ${c.email ? `<button class="${cls}" data-email-cust="${h(c.id)}">✉️ Email</button>` : ''}`;
   }
@@ -625,7 +678,7 @@
           <div class="card"><div class="card-head"><h2>Job history</h2><button class="btn sm primary" id="addJob">+ Job</button></div>
             ${jobs.length ? jobs.map(j => `<div class="job" data-job="${h(j.id)}">
               <div class="row nowrap"><div class="li-main"><div class="li-title">${h(j.title)}</div><div class="li-sub">${fmtDate(j.date)} · ${statusChip(j.status)} ${j.price ? '· ' + money(j.price) : ''}</div></div>
-                <label class="btn sm">📷 Add photo<input type="file" accept="image/*" capture="environment" multiple hidden data-photo="${h(j.id)}"></label><button class="btn sm" data-editjob="${h(j.id)}">Edit</button></div>
+                <label class="btn sm">📷 Add photo<input type="file" accept="image/*" capture="environment" multiple hidden data-photo="${h(j.id)}"></label>${c.phone && j.status !== 'canceled' ? `<button class="btn sm" data-texts-job="${h(j.id)}">💬 Text</button>` : ''}<button class="btn sm" data-editjob="${h(j.id)}">Edit</button></div>
               ${j.notes ? `<div class="job-notes pre">${h(j.notes)}</div>` : ''}
               ${(j.photos || []).length ? `<div class="photos">${j.photos.map((p, i) => `<figure><img data-src="${h(p.path)}" alt="${h(p.caption || 'Job photo')}" loading="lazy"><figcaption>${h(p.caption || '')}</figcaption><button class="ph-del" title="Remove photo" data-delphoto="${h(j.id)}:${i}">✕</button></figure>`).join('')}</div>` : ''}
             </div>`).join('') : '<div class="empty small">No jobs yet. Add one to keep notes and before/after photos.</div>'}
@@ -741,6 +794,21 @@
     $$('[data-doc]').forEach(r => { r.onclick = () => { location.hash = '#/doc/' + r.dataset.doc; }; r.onkeydown = e => { if (e.key === 'Enter') r.onclick(); }; });
   }
 
+  // Saved services (Settings) -> one tap adds a quote/invoice line with the default price.
+  function servicePicker(onPick) {
+    const list = L.cleanServices(B.services);
+    if (!list.length) return openModal('Saved services', `<div class="empty small">No saved services yet. Add the jobs you price often (name + usual price) in Settings, then pick them here in one tap.</div>
+      <div class="modal-actions"><button class="btn" data-close>Close</button><a class="btn primary" href="#/settings" data-close id="goSvcSettings">Add services in Settings</a></div>`);
+    openModal('Add from saved services', `<div class="field"><input class="input" id="svcQ" placeholder="Search services…" aria-label="Search services" autocomplete="off"></div>
+      <div class="svc-pick" id="svcPick"></div>
+      <div class="modal-actions"><button class="btn" data-close>Done</button></div>`, m => {
+      const box = $('#svcPick', m), q = $('#svcQ', m);
+      const show = () => { const r = L.searchServices(list, q.value); box.innerHTML = r.length ? r.map(sv => `<button type="button" class="svc-opt" data-svc="${h(sv.id)}"><span class="li-main"><span class="li-title">${h(sv.name)}</span>${sv.note ? `<span class="li-sub">${h(sv.note)}</span>` : ''}</span><span class="strong">${money(sv.price)}</span></button>`).join('') : '<div class="empty small">No match.</div>';
+        $$('[data-svc]', box).forEach(b => b.onclick = () => { const sv = list.find(x => x.id === b.dataset.svc); closeModal(); onPick(sv); }); };
+      q.addEventListener('input', show); show();
+    });
+  }
+
   let draft = null;
   function renderDoc(rawId) {
     const [id, qs] = String(rawId || '').split('?'); const p = new URLSearchParams(qs || '');
@@ -777,7 +845,7 @@
                 <td class="price" data-label="Price"><input class="input" type="number" inputmode="decimal" min="0" step="0.01" data-i="${i}" data-k="price" value="${h(it.price)}" aria-label="Price"></td>
                 <td class="num amt" data-amt="${i}">${money((Number(it.qty) || 0) * (Number(it.price) || 0))}</td><td class="rm"><button class="icon-btn" data-rm="${i}" aria-label="Remove line">✕</button></td></tr>`).join('')}
             </tbody></table>
-            <button class="btn sm" id="addLine">+ Add line</button>
+            <div class="row"><button class="btn sm" id="addLine">+ Add line</button><button class="btn sm" id="pickSvc">+ From saved services${(B.services || []).length ? ` (${(B.services || []).length})` : ''}</button></div>
             <div class="grid-3f mt">
               <div class="field"><label>Tax rate %</label><input class="input" type="number" min="0" max="30" step="0.001" id="tax" value="${h(d.tax_rate)}"></div>
               <div class="field"><label>${isQ ? 'Deposit to start' : 'Deposit already paid'}</label><input class="input" type="number" min="0" step="0.01" id="dep" value="${h(d.deposit)}"></div>
@@ -811,6 +879,7 @@
       const live = () => { sync(); d.items.forEach((it, i) => { const c = $(`[data-amt="${i}"]`); if (c) c.textContent = money((Number(it.qty) || 0) * (Number(it.price) || 0)); }); $('#totals').innerHTML = totalsHTML(L.docTotals(d)); };
       $$('[data-i], #tax, #dep').forEach(el => el.addEventListener('input', live));
       $('#addLine').onclick = () => { sync(); d.items.push({ desc: '', qty: 1, price: 0 }); draw(); };
+      $('#pickSvc').onclick = () => { sync(); servicePicker(sv => { d.items = L.addServiceToItems(d.items, sv); draw(); toast('Added ' + sv.name); }); };
       $$('[data-rm]').forEach(b => b.onclick = () => { sync(); d.items.splice(+b.dataset.rm, 1); if (!d.items.length) d.items.push({ desc: '', qty: 1, price: 0 }); draw(); });
       const save = async (extra, msg) => {
         sync(); Object.assign(d, extra || {});
@@ -860,6 +929,18 @@
             <div class="field"><label>Color</label><div class="swatches">${ACCENTS.map(c => `<button type="button" class="swatch ${c === B.accent ? 'on' : ''}" style="background:${c}" data-accent="${c}" aria-label="${c}"></button>`).join('')}</div></div>
             <button class="btn primary">Save</button>
           </form></div>
+        <div class="card" id="svcCard"><div class="card-head"><h2>Saved services and prices</h2><span class="small muted" id="svcCount">${L.cleanServices(B.services).length} saved</span></div>
+          <p class="small muted">The jobs you price often. On a quote or invoice, tap <b>+ From saved services</b> to add one in a tap. You can still change the price on each quote.</p>
+          <div id="svcList"></div>
+          <form id="svcForm" class="svc-form mt" autocomplete="off">
+            <div class="grid-2f"><div class="field"><label for="svcName">Service name</label><input class="input" id="svcName" name="name" maxlength="120" placeholder="e.g. TV mount (up to 65&quot;)"></div>
+              <div class="field"><label for="svcPrice">Usual price ($)</label><input class="input" id="svcPrice" name="price" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></div></div>
+            <div class="field"><label for="svcNote">Note (optional, shows on the quote line)</label><input class="input" id="svcNote" name="note" maxlength="300" placeholder="e.g. Mount included"></div>
+            <div class="row"><button class="btn primary" id="svcSave">+ Add service</button><button type="button" class="btn" id="svcCancel" hidden>Cancel</button></div>
+          </form></div>
+        <div class="card" id="textsCard"><h2>Job-day texts</h2>
+          <p class="small muted">Ready-made texts with the customer's name and your business name filled in. Tap <b>💬 Text</b> on a lead, customer or job to pick one. It opens your texting app; you press send. Nothing is sent from the CRM. New-lead texts and reminders end with "Reply STOP to opt out."</p>
+          <div class="tpl-list">${L.TEXT_TEMPLATES.map(t => `<div class="tpl-item"><div class="strong small">${h(t.name)}</div><div class="small muted">${h(L.buildText(t.id, B, { name: 'Maria Lopez', service: 'house wash' }, { job: { title: 'House wash', date: L.isoDate(L.addDays(new Date(), 1)) } }).body)}</div></div>`).join('')}</div></div>
         <div class="card"><h2>Reviews</h2>
           <form id="revForm" class="mt">
             <div class="field"><label>Your Google review link</label><input class="input" name="google_review_link" value="${h(B.google_review_link || '')}" placeholder="https://g.page/r/…/review"><span class="small muted">Google Business Profile → "Ask for reviews" → copy link.</span></div>
@@ -908,6 +989,29 @@
     $('#revForm').onsubmit = async e => { e.preventDefault(); const f = e.target; const link = fieldVal(f, 'google_review_link'); if (link && !/^https:\/\//.test(link)) return toast('Review link must start with https://');
       await saveBiz({ google_review_link: link, review_sms: fieldVal(f, 'review_sms'), review_email: fieldVal(f, 'review_email'), review_followup: fieldVal(f, 'review_followup') }); };
     $('#supForm').onsubmit = async e => { e.preventDefault(); await saveBiz({ support_email: fieldVal(e.target, 'support_email') }); renderSettings(); };
+    // saved services: add / edit / delete, saved on the business (cloud: synced to every phone; demo: this device)
+    let svcEdit = null;
+    const svcList = () => L.cleanServices(B.services);
+    const drawSvc = () => {
+      const list = svcList().sort((a, b) => a.name.localeCompare(b.name));
+      $('#svcCount').textContent = list.length + ' saved';
+      $('#svcList').innerHTML = list.length ? list.map(sv => `<div class="svc-row" data-svc-row="${h(sv.id)}"><div class="li-main"><div class="li-title">${h(sv.name)}</div>${sv.note ? `<div class="li-sub">${h(sv.note)}</div>` : ''}</div>
+        <div class="strong">${money(sv.price)}</div><div class="row nowrap"><button type="button" class="btn sm" data-svc-edit="${h(sv.id)}">Edit</button><button type="button" class="btn sm" data-svc-del="${h(sv.id)}" aria-label="Delete ${h(sv.name)}">✕</button></div></div>`).join('')
+        : '<div class="empty small">No saved services yet. Add your first one below.</div>';
+      $$('[data-svc-edit]').forEach(b => b.onclick = () => { const sv = svcList().find(x => x.id === b.dataset.svcEdit); if (!sv) return; svcEdit = sv.id;
+        $('#svcName').value = sv.name; $('#svcPrice').value = sv.price; $('#svcNote').value = sv.note; $('#svcSave').textContent = 'Save changes'; $('#svcCancel').hidden = false; $('#svcName').focus(); });
+      $$('[data-svc-del]').forEach(b => b.onclick = async () => { const sv = svcList().find(x => x.id === b.dataset.svcDel); if (!sv || !confirm(`Delete "${sv.name}" from saved services? Quotes already made keep their lines.`)) return;
+        await saveBiz({ services: svcList().filter(x => x.id !== sv.id) }, 'Deleted'); if (svcEdit === sv.id) resetSvc(); drawSvc(); });
+    };
+    const resetSvc = () => { svcEdit = null; $('#svcForm').reset(); $('#svcSave').textContent = '+ Add service'; $('#svcCancel').hidden = true; };
+    $('#svcCancel').onclick = resetSvc;
+    $('#svcForm').onsubmit = async e => { e.preventDefault(); const f = e.target;
+      const sv = L.cleanService({ id: svcEdit || undefined, name: fieldVal(f, 'name'), price: fieldVal(f, 'price'), note: fieldVal(f, 'note') });
+      if (!sv) return toast('Give the service a name');
+      if (!svcEdit && svcList().length >= L.SERVICES_MAX) return toast('That is the most saved services allowed (' + L.SERVICES_MAX + ').');
+      const list = svcEdit ? svcList().map(x => x.id === svcEdit ? sv : x) : svcList().concat(sv);
+      const wasEdit = !!svcEdit; await saveBiz({ services: list }, wasEdit ? 'Saved' : 'Added ' + sv.name); resetSvc(); drawSvc(); };
+    drawSvc();
     $('#lfOn').onchange = e => saveBiz({ lead_form_enabled: e.target.checked }, e.target.checked ? 'Form on' : 'Form off: new requests are refused');
     $('#formLink').onclick = showFormLink;
     $('#installBtn').onclick = () => PWA.prompt();
@@ -1012,7 +1116,7 @@
     const reviews = [{ id: id(), business_id: 'demo', customer_id: cid('Priya'), channel: 'sms', kind: 'first', created_at: ago(15) }];
     await store.replaceAll({
       business: { name: 'Peachtree Home Services', accent: '#ea580c', phone: '(404) 555-0100', email: 'hello@peachtree-example.com', postal_address: '123 Example St, Atlanta, GA 30303',
-        google_review_link: 'https://g.page/r/EXAMPLE/review', tax_rate: 8.9, lead_form_enabled: true, review_sms: L.DEFAULT_TEMPLATES.review_sms, review_email: L.DEFAULT_TEMPLATES.review_email, review_followup: L.DEFAULT_TEMPLATES.review_followup, example: true },
+        google_review_link: 'https://g.page/r/EXAMPLE/review', tax_rate: 8.9, lead_form_enabled: true, review_sms: L.DEFAULT_TEMPLATES.review_sms, review_email: L.DEFAULT_TEMPLATES.review_email, review_followup: L.DEFAULT_TEMPLATES.review_followup, services: L.EXAMPLE_SERVICES.map(x => Object.assign({}, x)), example: true },
       customers: C, leads, jobs, documents: docs, tasks, review_requests: reviews
     });
     B = store.business; S = store.state; await syncAutoTasks(); applyBrand();

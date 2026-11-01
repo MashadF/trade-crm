@@ -486,6 +486,123 @@
     return p;
   }
 
+  /* ---------- v2.8: saved services and prices (picked when building a quote or invoice) ---------- */
+  const SERVICES_MAX = 200;
+  function cleanService(sv) {
+    if (!sv || typeof sv !== 'object') return null;
+    const name = String(sv.name || '').trim().slice(0, 120);
+    if (!name) return null;
+    const price = Math.max(0, round2(Number(sv.price) || 0));
+    const note = String(sv.note || '').trim().slice(0, 300);
+    const id = String(sv.id || '').trim().slice(0, 60) || 'svc-' + Math.random().toString(36).slice(2, 10);
+    return { id, name, price, note };
+  }
+  function cleanServices(list) {
+    const seen = new Set();
+    return (Array.isArray(list) ? list : []).map(cleanService).filter(sv => sv && !seen.has(sv.id) && seen.add(sv.id)).slice(0, SERVICES_MAX);
+  }
+  const serviceLine = sv => ({ desc: sv.note ? `${sv.name}: ${sv.note}` : sv.name, qty: 1, price: Math.max(0, round2(Number(sv.price) || 0)) });
+  // Adds a saved service as a quote line. A single untouched blank line is replaced instead of left behind.
+  function addServiceToItems(items, sv) {
+    const list = (items || []).map(it => Object.assign({}, it));
+    const blank = it => !String(it.desc || '').trim() && !(Number(it.price) || 0);
+    const line = serviceLine(sv);
+    if (list.length && blank(list[list.length - 1])) list[list.length - 1] = line; else list.push(line);
+    return list;
+  }
+  function searchServices(list, q) {
+    q = String(q || '').trim().toLowerCase();
+    const all = cleanServices(list).sort((a, b) => a.name.localeCompare(b.name));
+    return q ? all.filter(sv => (sv.name + ' ' + sv.note).toLowerCase().includes(q)) : all;
+  }
+  const EXAMPLE_SERVICES = [
+    { id: 'svc-ex-1', name: 'TV mount (up to 65")', price: 149, note: 'Mount included' },
+    { id: 'svc-ex-2', name: 'Hide wires in wall', price: 129, note: '' },
+    { id: 'svc-ex-3', name: 'House wash', price: 325, note: 'Up to 2,500 sq ft' },
+    { id: 'svc-ex-4', name: 'Driveway surface clean', price: 100, note: '' },
+    { id: 'svc-ex-5', name: 'Haul-away load', price: 50, note: 'Per truck load' }
+  ];
+
+  /* ---------- v2.8: "How am I doing" card on Today (plain counts, no jargon) ---------- */
+  function howAmIDoing(state, now) {
+    now = now ? new Date(now) : new Date();
+    const leads = state.leads || [], docs = state.documents || [], jobs = state.jobs || [];
+    const today = isoDate(now), weekEnd = isoDate(addDays(now, 6));
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1), nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const fresh = leads.filter(l => l.status === 'new');
+    const waiting = fresh.filter(l => !l.contacted_at && !isProspect(l));
+    const quotes = docs.filter(d => d.kind === 'quote' && d.status === 'sent');
+    const owed = docs.filter(d => amountOwed(d) > 0);
+    const weekJobs = jobs.filter(j => j.date && j.date >= today && j.date <= weekEnd && j.status !== 'canceled');
+    const paid = docs.filter(d => { if (d.kind !== 'invoice' || d.status !== 'paid') return false; const t = new Date(d.paid_at || d.sent_at || d.created_at); return t >= monthStart && t < nextMonth; });
+    return {
+      newLeads: fresh.length,
+      waitingReply: waiting.length,
+      quotesWaiting: quotes.length,
+      quotesWaitingValue: round2(quotes.reduce((s, d) => s + docTotals(d).total, 0)),
+      moneyOwed: round2(owed.reduce((s, d) => s + amountOwed(d), 0)),
+      moneyOwedCount: owed.length,
+      jobsThisWeek: weekJobs.length,
+      collectedThisMonth: round2(paid.reduce((s, d) => s + docTotals(d).total, 0)),
+      collectedCount: paid.length,
+      monthName: now.toLocaleDateString('en-US', { month: 'long' })
+    };
+  }
+
+  /* ---------- v2.8: job-day text templates + one-tap reply (only OPENS the texting app; never sends) ---------- */
+  const STOP_LINE = 'Reply STOP to opt out.';
+  const TEXT_TEMPLATES = [
+    { id: 'thanks_call', name: 'Thanks, can I call you?', for: 'lead', optOut: true,
+      text: 'Hi {first}, this is {business}. Thanks for reaching out about {service}! Is now a good time for a quick call? If not, just reply with a better time.' },
+    { id: 'missed_call', name: 'Sorry I missed your call', for: 'lead', optOut: true,
+      text: "Hi {first}, this is {business}. Sorry I missed your call! How can I help? Reply here or I'll call you back shortly." },
+    { id: 'on_my_way', name: 'On my way', for: 'job', optOut: false,
+      text: "Hi {first}, it's {business}. I'm on my way for {job} and should be there in about 20 minutes." },
+    { id: 'reminder', name: 'Reminder for tomorrow', for: 'job', optOut: true,
+      text: 'Hi {first}, this is {business}. Just a reminder that {job} is booked for tomorrow{date}. Reply here if you need to change the time.' },
+    { id: 'job_done', name: 'Job done, thank you', for: 'job', optOut: false,
+      text: 'Hi {first}, thanks for choosing {business}! {jobCap} is all done. If anything needs a second look, just reply here.' }
+  ];
+  const textTemplate = id => TEXT_TEMPLATES.find(t => t.id === id) || null;
+  // person = lead or customer; extra = { job: {title, date}, service }
+  function buildText(id, business, person, extra) {
+    const t = textTemplate(id); if (!t) return null;
+    business = business || {}; extra = extra || {};
+    const job = extra.job || null;
+    const jobName = String((job && job.title) || extra.service || (person && person.service) || 'your job').trim();
+    const jobText = /^(your|the|a|an)\s/i.test(jobName) ? jobName : `your ${jobName.charAt(0).toLowerCase() + jobName.slice(1)}`;
+    const day = job && job.date ? parseDay(job.date) : null;
+    const vars = {
+      first: greetingName(person), business: String(business.name || '').trim() || 'your contractor',
+      service: String(extra.service || (person && person.service) || '').trim() || 'your project',
+      job: jobText, jobCap: jobText.charAt(0).toUpperCase() + jobText.slice(1),
+      date: day ? ` (${day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })})` : ''
+    };
+    let body = fillTemplate(t.text, vars);
+    if (t.optOut && !hasStopLine(body)) body += ' ' + STOP_LINE;
+    return { id: t.id, name: t.name, body, optOut: t.optOut };
+  }
+  const hasStopLine = body => /reply\s+stop/i.test(String(body || ''));
+  // Can we open a text to this person? Uses the same rules as review requests (opted out = blocked).
+  function textCheck(person) {
+    if (!person) return { ok: false, reason: 'No one to text.' };
+    if (person.opted_out) return { ok: false, reason: 'They opted out (replied STOP or asked not to be contacted). Texting is blocked.' };
+    if (!person.phone) return { ok: false, reason: 'No phone number on file.' };
+    return { ok: true, warn: person.sms_ok ? '' : 'No text consent recorded. Only reply about what they asked for.' };
+  }
+  // What to suggest first: new lead -> "Thanks, can I call you?", job today -> "On my way", job tomorrow -> reminder.
+  function suggestText(ctx, now) {
+    if (!ctx) return 'thanks_call';
+    if (ctx.job) {
+      const t = isoDate(now ? new Date(now) : new Date()), tm = isoDate(addDays(now ? new Date(now) : new Date(), 1));
+      if (ctx.job.status === 'done') return 'job_done';
+      if (ctx.job.date === tm) return 'reminder';
+      if (ctx.job.date === t) return 'on_my_way';
+      return 'reminder';
+    }
+    return ctx.lead ? 'thanks_call' : 'on_my_way';
+  }
+
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   return { DAY, LEAD_STATUSES, DOC_STATUSES, DEFAULT_TEMPLATES, STOP_WORDS, round2, isoDate, addDays, parseDay, money, esc,
@@ -493,5 +610,7 @@
     fillTemplate, firstName, isStopReply, smsLink, mailtoLink, telLink, mapLink, contactCheck, reviewRequest, reviewStatus,
     parseCSV, csvCell, toCSV, csvToCustomers, checkConfig, cleanLead,
     OPT_OUT_LINE, MAILTO_MAX, GMAIL_MAX, EMAIL_TEMPLATES, isEmail, greetingName, emailVars, complianceFooter, hasOptOut, buildEmail, checkEmail,
-    gmailLink, emailLinks, emailHistory, emailDuplicate, replyState, contactedPatch };
+    gmailLink, emailLinks, emailHistory, emailDuplicate, replyState, contactedPatch,
+    SERVICES_MAX, cleanService, cleanServices, serviceLine, addServiceToItems, searchServices, EXAMPLE_SERVICES, howAmIDoing,
+    STOP_LINE, TEXT_TEMPLATES, textTemplate, buildText, hasStopLine, textCheck, suggestText };
 });

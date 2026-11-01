@@ -5,7 +5,7 @@ A phone-first CRM for 1–5 person trade shops (handyman, junk removal, pressure
 - **Demo mode** (default, `config.js` empty): everything is saved in this browser only (localStorage). It loads clearly labeled example data on first visit.
 - **Cloud mode** (Supabase URL + anon key in `config.js`): email/password login, one business per account, data synced across phones, private job-photo storage, a public website lead form, and customer share links for quotes and invoices.
 
-Status (Oct 28, 2026): **built and tested locally only. Nothing is deployed and no Supabase project exists yet.** See "What is NOT tested" below.
+Status (Oct 31, 2026): **live** on GitHub Pages at **https://mashadf.github.io/trade-crm/** (version 2.8.0, see `VERSION` in `sw.js`), in cloud mode against the Supabase project `bamwzxbowijasxggyjca` (business "Trade CRM"). The app uses only the public anon key. It is **not** hosted on Cloudflare. Leads found by the Rex and Webster bots are added by the daily lead sync (see "Daily lead sync" below and `import-log.md`). Some items under "What is NOT tested" below date from before go-live and have not been re-checked.
 
 ## Files
 
@@ -26,14 +26,16 @@ Status (Oct 28, 2026): **built and tested locally only. Nothing is deployed and 
 | `manifest.webmanifest`, `icons/` | Makes it installable as a phone app (name "Trade CRM", full-screen, blue theme). Icons: 192, 512, maskable 512, apple-touch 180, favicon. |
 | `sw.js` | Service worker: keeps the app's own files on the phone so it opens offline. **Never stores any customer data, logins or Supabase responses.** |
 | `tools/make_icons.py` | Re-draws the icons (PIL) in a new color: `python3 tools/make_icons.py` |
-| `_headers` | Cloudflare Pages header rules so app updates reach phones promptly |
+| `_headers` | Header rules written for Cloudflare Pages. **GitHub Pages ignores this file**, so these headers are not applied on the live site; app updates still reach phones through the `sw.js` `VERSION` bump. |
 | `v1-backup/` | The previous version, untouched |
 
 ## Features
 
-- **Today:** new-lead count, money owed, quotes won (30 days), jobs today; new leads with Call/Text; tasks due (manual + automatic); today's and upcoming jobs.
+- **Today:** a **How am I doing** card with six plain numbers, each one tap from the list behind it: New leads, Waiting for your reply (new, not contacted, not a Rex/Webster prospect), Quotes waiting on a yes (sent quotes + their total), Money owed to you (unpaid invoices), Jobs this week (today + next 6 days, canceled left out) and Money collected in <this month> (invoices marked paid this calendar month). New leads with Call/**one-tap Text**; tasks due (manual + automatic); today's and upcoming jobs.
 - **Leads:** inbox filtered by New / Contacted / Quote sent / Won / Lost. A new lead's badge reads "New · 5 min ago", turns amber **"New, not contacted yet"** at 15 minutes and red **"Overdue, not contacted yet"** at 1 hour. Prospects found by the Rex/Webster bots (source starts with "Rex" or "Webster") never asked for a quote, so they get a calm grey "New, not contacted yet · 8 hr ago" badge instead. Rex/Webster notes are shown as labeled lines (Rating, Reviews without a reply, Website, Notes, Outreach, Google Maps), and any web link in a message is a short tappable link (display only; the stored text is unchanged). A second **Source** row (All / Rex / Webster / My own, with live counts) combines with the status chips and is remembered on the phone (localStorage `tradecrm.leadSource`). A source counts as Rex/Webster when it is the bot's name or starts with it followed by a non-letter ("Rex - unanswered reviews", "rex-2"); "Rexford Plumbing" is your own. A source listing both bots ("Webster - …; Rex - …") shows under both. Bot leads carry a small text badge (Rex = orange, Webster = teal) on cards, the lead popup and Today, and Today's New leads card shows "New from: Rex · Webster · My own" links into the filtered inbox. Display only; stored leads are unchanged. A third **Email** row (All / Has email / No email, live counts that combine with status and Source, remembered as `tradecrm.leadEmail`) finds leads you can only call or text. A lead counts as "No email" when its email is empty, only spaces, or not a plausible address (no `name@domain.tld`, e.g. "abc", "n/a"), the same rule the email composer uses to allow sending. Those leads carry a dashed "⊘ No email" text badge on cards, Today rows and the popup (with "Call or text instead"), and Today's New leads card shows "No email: N", which opens the inbox filtered to new leads with no email. Tapping Call/Text/Email marks it contacted. One tap to "Make customer" or start a quote. The "Text OK" chip shows the lead ticked the consent box.
 - **Customers:** searchable cards with one-tap call, text and map (Google Maps). Each card shows lead source, address, notes, tags and next-service-due. The detail page has job history with **photo upload** (shrunk on the phone first) and job notes, plus quotes/invoices and tasks.
+- **Saved services and prices (v2.8):** Settings → *Saved services and prices*: add, edit and delete the jobs you price often (name, usual price, optional note; up to 200). On a quote or invoice, **+ From saved services** opens a searchable list and adds the line ("Name: note", qty 1, usual price) in one tap; the price can still be changed on that quote. Stored on the business row (`businesses.services`, same RLS as the rest of the business, never shown on the public quote link). Cloud mode reads them from the saved copy offline; demo mode keeps them on the device.
+- **Job-day texts + one-tap reply (v2.8):** ready-made texts: *Thanks, can I call you?*, *Sorry I missed your call*, *On my way*, *Reminder for tomorrow*, *Job done, thank you*, with the customer's first name, your business name and the job/date filled in. New-lead replies and reminders end with "Reply STOP to opt out." A new lead's **Text** button is one tap: it opens your texting app with *Thanks, can I call you?* filled in and marks the lead contacted; **⋯** (and 💬 Text on customer cards, customer job rows, today's jobs and the lead popup) opens a picker where you choose a text and edit it, then **Open in Messages**. The CRM only builds an `sms:` link; you press send in your own texting app, **nothing is ever sent by the CRM**. Opted-out customers (and leads linked to them) are blocked, a no-consent warning shows when OK-to-text isn't recorded, and Rex/Webster prospects get a reminder that they didn't contact you. Settings → *Job-day texts* previews them.
 - **Quotes & invoices:** line items, tax, deposit, status (draft/sent/accepted/paid, plus void), due date, notes, and a pasted **payment link** (Stripe, Square or PayPal; https only). The share link opens a printable page with a Pay button. The customer can **type their name to accept**: the name and timestamp are saved and labeled *an acceptance record, not a legal e-signature*. You can also record acceptance in person, turn a quote into an invoice, or mark paid.
 - **Automatic reminder tasks:** follow up on quotes still open after 3 days, invoices unpaid after 7 days, and next-service-due within 7 days. They close themselves when the quote/invoice moves on.
 - **Review requests:** SMS and email templates with the business's own Google review link and **one** follow-up (offered after 3 days). They open your own Messages/Email app (`sms:` / `mailto:`), so **nothing is sent automatically**. SMS adds "Reply STOP to opt out." Email adds the postal address + unsubscribe line. Opted-out customers are blocked. Each customer has a consent log, OK-to-text / OK-to-email switches and a "They replied STOP" button.
@@ -45,7 +47,7 @@ Status (Oct 28, 2026): **built and tested locally only. Nothing is deployed and 
 
 ## Install it on a phone (after it's deployed on https)
 
-Installing needs https, so it works once the app is on Cloudflare Pages (or `http://localhost` for testing).
+Installing needs https. The live app at https://mashadf.github.io/trade-crm/ is on https, so it can be installed (or use `http://localhost` for testing).
 - **iPhone / iPad:** open the app link in **Safari** → tap **Share** (square with an arrow) → **Add to Home Screen** → **Add**. On iPhone the home-screen app has its own storage, so sign in once inside it.
 - **Android:** open the link in **Chrome** → tap **Install app** in Settings, or use the **⋮** menu → **Install app** / **Add to Home screen** → **Install**.
 - **Desktop Chrome/Edge:** the install icon in the address bar, or Settings → Install app.
@@ -64,8 +66,8 @@ cd crm-app && python3 -m http.server 8080   # open http://localhost:8080
 ## Tests
 
 ```bash
-node --test tests/                      # 44 unit tests: logic, email templates/links/guard, sync layer vs mocked Supabase client, service-worker rules
-python3 test_screens.py                 # 600 browser checks (360/390/412 px + desktop) + screenshots, incl. PWA: installable, offline reload, update flow
+node --test tests/                      # 56 unit tests (incl. v2.8 services, How am I doing, job-day texts): logic, email templates/links/guard, sync layer vs mocked Supabase client, service-worker rules
+python3 test_screens.py                 # 949 browser checks (360/390/412 px + desktop) + screenshots, incl. PWA: installable, offline reload, update flow
 # SQL / RLS isolation, locally in PGlite (no Supabase account):
 mkdir -p /tmp/pgtest && cd /tmp/pgtest && npm i @electric-sql/pglite
 cp <crm-app>/supabase/test/*.mjs . && SQL_DIR=<crm-app>/supabase/ node run_pglite.mjs && SQL_DIR=<crm-app>/supabase/ node mutation_check.mjs
@@ -78,18 +80,24 @@ The SQL ran in PGlite (real Postgres 17 in WASM) with **stub** `auth`/`storage` 
 2. Storage uploads, signed photo URLs and Supabase's real `storage.foldername()` policy behavior.
 3. PostgREST specifics: the `upsert(..., {onConflict:'business_id,auto_key', ignoreDuplicates:true})` path, `.single()` errors, and RPC argument names over HTTP.
 4. The lead-form rate limit and insert-only policy under a real anon key over the network.
-5. Cloudflare Pages hosting, the service worker over real https, and `sms:`/`mailto:`/`tel:` links on real iPhones and Androids (only headless desktop Chromium was used).
+5. (Written before go-live.) The service worker over real https on GitHub Pages, and `sms:`/`mailto:`/`tel:` links on real iPhones and Androids (only headless desktop Chromium was used).
 6. **Real phone installs:** iPhone "Add to Home Screen", the iOS status bar and notch/home-bar safe areas, and the Android install prompt on a real device. Only desktop headless Chromium was used. It reported the app installable with no errors and it opened offline.
 7. Two phones editing the same record: last save wins; there's no live push (the app refreshes every minute and when you reopen it).
 
 Run `supabase/isolation_test.sql` in the real project's SQL Editor right after `schema.sql` (step 3 below). It must print `ALL ISOLATION TESTS PASSED`.
 
-## Go-live steps (needs Mashad's OK: creates accounts)
+## Go-live steps (already done for Trade CRM; kept for reference or a new deployment)
+
+The current deployment uses **GitHub Pages** (repo `mashadf/trade-crm`), not Cloudflare. Step 5 below is written for Cloudflare Pages; on GitHub Pages, publish the same files from the repo and note that `_headers` has no effect there.
 
 1. **Create a Supabase project** (supabase.com → New project; pick a US region; save the database password in a password manager).
-2. **Auth settings:** Authentication → Providers → Email on (keep "Confirm email" on). Authentication → URL Configuration → set **Site URL** to the final app URL (e.g. `https://yourcrm.pages.dev`) and add it to Redirect URLs. Set up **custom SMTP** before real customers sign up: Supabase's built-in email is for testing only and is heavily limited.
+2. **Auth settings:** Authentication → Providers → Email on (keep "Confirm email" on). Authentication → URL Configuration → set **Site URL** to the final app URL (for Trade CRM: `https://mashadf.github.io/trade-crm/`) and add it to Redirect URLs. Set up **custom SMTP** before real customers sign up: Supabase's built-in email is for testing only and is heavily limited.
 3. **Run the schema:** SQL Editor → paste all of `supabase/schema.sql` → Run. Then paste `supabase/isolation_test.sql` → Run → confirm `ALL ISOLATION TESTS PASSED` (it rolls back, leaving no test data). Check Storage shows a private `job-photos` bucket.
 4. **Configure the app:** Project Settings → API → copy the **Project URL** and the **anon / publishable** key (NOT service_role / secret) into `config.js`. Set `SUPPORT_EMAIL`.
 5. **Deploy on Cloudflare Pages:** dash.cloudflare.com → Workers & Pages → Create → Pages → upload the `crm-app` folder (direct upload; no build command, output = the folder). Leave out `v1-backup/`, `tests/`, `supabase/test/`, `screenshots/`, `tools/`, `test_screens.py`. Keep `_headers`, `sw.js`, `manifest.webmanifest` and `icons/`. If you change the brand color or name for everyone, re-run `tools/make_icons.py` and edit `manifest.webmanifest`. Optionally connect a custom domain.
 6. **Smoke test on a real phone:** create an account, confirm the email, name the business, add a customer + job + photo, create and send a quote, open the share link on a second phone and accept it, submit `lead-form.html?b=<business id>` (the link is in Leads → Website form link), and check that it shows up. Install it on the home screen (iPhone + Android), turn on airplane mode and confirm it still opens with the saved copy. Then sign up a second test account and confirm it sees nothing from the first.
 7. **Each new client:** they sign up at the app URL (one account = one business), set their name/color/review link/postal address in Settings, and paste the lead-form iframe on their website.
+
+## Daily lead sync (Rex + Webster -> Leads)
+
+Script and instructions: `/workspace/crm-import/sync.py` and `/workspace/crm-import/README-sync.md` (on the shared box, not deployed). It only **adds** new leads from `webster/atlanta-leads.csv` and `rex/atlanta_prospects.csv`, moves leads new -> contacted only when `webster/outreach-log.md` records an email as sent, and moves new/contacted -> lost for names on `rex/do_not_contact.txt`. It never changes anything you edit in the app and never sends email. Every real run adds one line to `import-log.md`; backups and SQL for each run are in `/workspace/crm-import/runs/<date>/`.

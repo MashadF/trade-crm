@@ -11,7 +11,7 @@
   'use strict';
   const TABLES = ['customers', 'leads', 'jobs', 'documents', 'tasks', 'review_requests', 'emails'];
   const COLUMNS = {
-    businesses: ['name', 'accent', 'phone', 'email', 'postal_address', 'google_review_link', 'review_sms', 'review_email', 'review_followup', 'support_email', 'tax_rate', 'lead_form_enabled'],
+    businesses: ['name', 'accent', 'phone', 'email', 'postal_address', 'google_review_link', 'review_sms', 'review_email', 'review_followup', 'support_email', 'tax_rate', 'lead_form_enabled', 'services'],
     customers: ['name', 'phone', 'email', 'address', 'source', 'tags', 'notes', 'sms_ok', 'email_ok', 'consent_log', 'opted_out', 'opted_out_at', 'next_service_due', 'updated_at'],
     leads: ['name', 'phone', 'email', 'address', 'service', 'message', 'sms_ok', 'source', 'status', 'customer_id', 'contacted_at', 'updated_at'],
     jobs: ['customer_id', 'title', 'date', 'price', 'status', 'notes', 'photos', 'updated_at'],
@@ -168,6 +168,9 @@
         if (!e.lead_id && !e.customer_id) continue;
         await self.insert('emails', e);
       }
+      // saved services come back too, but never overwrite a list that is already there
+      const sv = data.business && Array.isArray(data.business.services) ? data.business.services : [];
+      if (sv.length && !((self.business && self.business.services) || []).length) { try { await self.updateBusiness({ services: sv }); } catch (e) { console.warn('services not restored', e); } }
       await self.loadAll();
     };
     self.uploadPhoto = async (jobId, blob) => {
