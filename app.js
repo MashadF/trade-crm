@@ -10,7 +10,7 @@
   const SOURCES = ['Website form', 'Google', 'Google Business Profile', 'Referral', 'Repeat customer', 'Facebook', 'Nextdoor', 'Yard sign / truck', 'Thumbtack / Angi', 'Other'];
   const params = new URLSearchParams(location.search);
   let store = null, S = null, B = null;   // store, state, business
-  let leadFilter = 'open', moneyTab = 'quote', custQuery = '';
+  let leadFilter = 'open', moneyTab = 'quote', custQuery = '', siteFilter = 'all';
   // Leads "Source" filter (All / Rex / Webster / My own): remembered on this device. Display only.
   const SRC_KEY = 'tradecrm.leadSource';
   let leadSrc = (() => { try { return L.normSourceFilter(localStorage.getItem(SRC_KEY)); } catch (e) { return 'all'; } })();
@@ -102,6 +102,30 @@
     sl.hidden = !se; if (se) sl.href = L.mailtoLink(se, `Help with ${name} CRM`, `Hi,\n\nI need help with:\n\n\n--\nBusiness: ${name}\nAccount: ${(store && store.user && store.user.email) || 'demo'}\nPage: ${location.hash}`);
     const newLeads = S ? S.leads.filter(l => l.status === 'new').length : 0;
     $('#leadCount').hidden = !newLeads; $('#leadCount').textContent = newLeads;
+    paintWorkspaceBar();
+  }
+  function isSalesAccount() {
+    if (!B) return false;
+    const role = B.role || (store && store.role);
+    return role === 'owner' && (B.workspace_kind || 'own') !== 'client';
+  }
+  function previewHref(token) { return new URL('site.html?t=' + encodeURIComponent(token), location.href).href; }
+  function paintWorkspaceBar() {
+    const bar = $('#workspaceBar'); if (!bar) return;
+    const list = (store && store.workspaces) || [];
+    if (!B || list.length < 2) { bar.hidden = true; bar.innerHTML = ''; return; }
+    bar.hidden = false;
+    bar.innerHTML = `<label for="wsPick">Workspace</label><select id="wsPick" class="input ws-pick">${list.map(w => `<option value="${h(w.id)}" ${w.id === B.id ? 'selected' : ''}>${h(w.name)} · ${h(L.workspaceRoleLabel(w))}</option>`).join('')}</select>`;
+    $('#wsPick').onchange = async () => {
+      const id = $('#wsPick').value; if (!id || id === B.id) return;
+      try {
+        await store.switchBusiness(id);
+        B = store.business; S = store.state;
+        const page = (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'today';
+        if (['customer', 'doc', 'site'].includes(page)) location.hash = '#/today';
+        else route();
+      } catch (e) { toast(e.message || 'Could not switch'); paintWorkspaceBar(); }
+    };
   }
   function setChrome(loggedIn) { document.body.classList.toggle('auth-mode', !loggedIn); }
 
@@ -180,8 +204,8 @@
     if (!S) return;
     const parts = (location.hash.replace(/^#\/?/, '') || 'today').split('/');
     const [page, id] = parts;
-    $$('.tabbar a').forEach(a => a.classList.toggle('active', a.dataset.tab === ({ customer: 'customers', doc: 'money' }[page] || page)));
-    const r = { today: renderToday, leads: renderLeads, customers: renderCustomers, customer: () => renderCustomer(id), money: renderMoney, doc: () => renderDoc(id), settings: renderSettings }[page] || renderToday;
+    $$('.tabbar a').forEach(a => a.classList.toggle('active', a.dataset.tab === ({ customer: 'customers', doc: 'money', site: 'sites' }[page] || page)));
+    const r = { today: renderToday, leads: renderLeads, customers: renderCustomers, customer: () => renderCustomer(id), money: renderMoney, doc: () => renderDoc(id), settings: renderSettings, sites: renderSites, site: () => renderSite(id) }[page] || renderToday;
     applyBrand(); await r(); window.scrollTo(0, 0);
   }
   window.addEventListener('hashchange', route);
@@ -265,7 +289,9 @@
     const hello = new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 17 ? 'Good afternoon' : 'Good evening';
     view.innerHTML = `
       ${B.example ? `<div class="notice warn">You're looking at <b>example data</b> for a made-up business. Clear it in <a href="#/settings">Settings</a> before adding real customers.</div>` : ''}
-      <div class="page-head"><div><h1>${hello}</h1><div class="muted">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
+      <div class="page-head"><div><h1>${hello}</h1><div class="muted">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+        ${isSalesAccount() ? '<div class="small"><a href="#/sites">Sites</a> are separate workspaces. Enquiries there are not these sales leads.</div>' : '<div class="small">This is a client workspace. Sales notes and email drafts stay in your own account.</div>'}
+      </div>
         <div class="row"><button class="btn" id="addLead">+ Lead</button><button class="btn" id="addTask">+ Task</button><a class="btn primary" href="#/doc/new-quote">+ Quote</a></div></div>
       ${howCard(L.howAmIDoing(S))}
       <div class="grid2">
@@ -373,10 +399,11 @@
       <dt>Text OK?</dt><dd>${l.sms_ok ? 'Yes, ticked on form' : 'Not given'}</dd>${(() => { const rs = L.replyState(S.emails || [], l.id); return rs.replied ? `<dt>Replied</dt><dd><span class="chip em-replied">Replied ${h(fmtDate(rs.repliedAt))}</span></dd>` : ''; })()}</dl>
       <div class="em-head"><h3>Emails</h3><button class="btn sm primary" id="emailL">✉️ Write email</button></div>
       ${emailHistoryHtml(L.emailHistory(S.emails || [], { leadId: l.id }))}
-      <div class="modal-actions"><button class="btn danger" id="delLead">Delete</button>${l.phone ? `<button class="btn" data-texts-lead="${h(l.id)}">💬 Text</button>` : ''}<button class="btn" id="editL">Edit</button>${l.customer_id ? `<a class="btn primary" href="#/customer/${h(l.customer_id)}" data-close>Customer card</a>` : '<button class="btn primary" id="convL">Make customer</button>'}</div>`, m => {
+      <div class="modal-actions"><button class="btn danger" id="delLead">Delete</button>${l.phone ? `<button class="btn" data-texts-lead="${h(l.id)}">💬 Text</button>` : ''}<button class="btn" id="editL">Edit</button>${isSalesAccount() ? '<button class="btn" id="siteFromLead">Draft a client site</button>' : ''}${l.customer_id ? `<a class="btn primary" href="#/customer/${h(l.customer_id)}" data-close>Customer card</a>` : '<button class="btn primary" id="convL">Make customer</button>'}</div>`, m => {
       fillNotes(m);
       $('#delLead', m).onclick = async () => { if (confirm('Delete this lead?')) { await guard(() => store.remove('leads', id), 'Deleted'); closeModal(); rerender(); } };
       $('#editL', m).onclick = () => editLead(l);
+      const siteBtn = $('#siteFromLead', m); if (siteBtn) siteBtn.onclick = () => { closeModal(); openSiteDraft(l); };
       $('#emailL', m).onclick = () => openComposer({ leadId: id });
       bindEmailHistory(m, () => { openLead(id); rerender(); });
       const cv = $('#convL', m); if (cv) cv.onclick = async () => { const c = await convertLead(id); closeModal(); location.hash = '#/customer/' + c.id; };
@@ -1061,6 +1088,248 @@
     await guard(() => store.replaceAll(data), 'Restored'); B = store.business; await syncAutoTasks(); location.hash = '#/today'; rerender();
   }
 
+  /* ---------------- SITES: one client workspace per business, managed from your account ---------------- */
+  const siteStatusLabel = { draft: 'Draft', ready: 'Ready', shared: 'Shared', live: 'Live', paused: 'Paused' };
+  const siteChip = s => `<span class="chip site-${h(s || 'draft')}">${h(siteStatusLabel[s] || s || 'Draft')}</span>`;
+  function servicesFromText(text) {
+    return String(text || '').split('\n').map(line => {
+      const [name, detail] = line.split('|');
+      return { name: (name || '').trim(), detail: (detail || '').trim() };
+    }).filter(s => s.name);
+  }
+  function nameClientKey(name) {
+    const slug = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+    return slug.length >= 2 ? 'name:' + slug : '';
+  }
+  function openSiteDraft(lead) {
+    if (!isSalesAccount()) return toast('Open a client site from your own account.');
+    lead = lead || {};
+    const proposal = L.buildSiteProposal({ businessName: lead.name || '', senderName: (B && B.name) || '' });
+    openModal(lead.id ? 'Draft a site for this lead' : 'New client site', `<form id="f">
+      <p class="small muted">This opens a separate workspace for that business and makes you the manager. No invitation is sent, and they cannot sign in yet. Sales notes and this email draft stay in your account.</p>
+      <div class="field"><label>Business name *</label><input class="input" name="name" required maxlength="120" value="${h(lead.name || '')}"></div>
+      <div class="grid-2f"><div class="field"><label>Phone on the preview</label><input class="input" name="phone" value="${h(lead.phone || '')}"></div>
+      <div class="field"><label>Email for your draft</label><input class="input" name="to_email" type="email" value="${h(lead.email || '')}"></div></div>
+      <label class="checkline"><input type="checkbox" name="show_email"> Show that email on the preview as plain text</label>
+      <div class="field"><label>What they do</label><input class="input" name="trade" maxlength="160" value="${h(lead.service || '')}"></div>
+      <div class="field"><label>Area they serve</label><input class="input" name="service_area" maxlength="120" placeholder="Only if you already know it"></div>
+      <div class="field"><label>Services, one per line</label><textarea class="input" name="services" rows="4">${h(lead.service || '')}</textarea></div>
+      <div class="field"><label>About (only what you can verify)</label><textarea class="input" name="about" rows="3" maxlength="2000"></textarea></div>
+      <div class="field"><label>Sales notes (only in your account)</label><textarea class="input" name="notes" rows="2"></textarea></div>
+      <div class="field"><label>Email subject</label><input class="input" name="subject" maxlength="500" value="${h(proposal.subject)}"></div>
+      <div class="field"><label>Email draft</label><textarea class="input" name="body" rows="8">${h(proposal.body)}</textarea></div>
+      <p class="small muted">The CRM does not send this email. No preview link is included unless you add the one from this screen. No price is included.</p>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save draft workspace</button></div></form>`, m => {
+      $('#f', m).onsubmit = async e => {
+        e.preventDefault();
+        const f = e.target;
+        const name = fieldVal(f, 'name');
+        const key = lead.id ? L.clientKeyForLead(lead.id) : nameClientKey(name);
+        if (!key) return toast('Add a business name first.');
+        const showEmail = !!fieldVal(f, 'show_email');
+        const to = fieldVal(f, 'to_email');
+        const result = await guard(() => store.bootstrapClientPreview({
+          salesBusinessId: store.homeBusinessId(),
+          clientKey: key,
+          name,
+          leadId: lead.id || null,
+          site: { business_name: name, trade: fieldVal(f, 'trade'), phone: fieldVal(f, 'phone'), email: showEmail ? to : '', service_area: fieldVal(f, 'service_area'), about: fieldVal(f, 'about'), services: servicesFromText(fieldVal(f, 'services')), template: 'plain', accent: '#334155' },
+          proposal: { to_email: to, email_confidence: to ? 'unknown' : 'unknown', subject: fieldVal(f, 'subject'), body: fieldVal(f, 'body'), notes: fieldVal(f, 'notes'), provenance: lead.id ? 'Created from a sales lead in this account.' : 'Typed in this account.' }
+        }));
+        if (!result) return;
+        closeModal();
+        toast(result.reused_workspace ? 'That client workspace was already there.' : 'Client workspace saved. Invite not sent.');
+        B = store.business; S = store.state; location.hash = '#/sites';
+      };
+    });
+  }
+  async function renderSites() {
+    if (!isSalesAccount()) return renderClientSites();
+    let sites = [], enquiries = [];
+    try { sites = await store.listManagedSites(); enquiries = await store.listManagedEnquiries(); }
+    catch (e) { toast('Could not load sites: ' + (e.message || e)); }
+    const accounts = S.client_accounts || [];
+    const proposals = S.site_proposals || [];
+    const todayCount = L.sitesStartedOn(sites, new Date());
+    const shown = sites.filter(s => siteFilter === 'all' || s.status === siteFilter);
+    const newCount = id => enquiries.filter(e => e.client_site_id === id && e.status === 'new').length;
+    view.innerHTML = `
+      <div class="page-head"><div><h1>Sites</h1><div class="muted small">Each client has their own workspace. You are the manager. An invitation is not sent from here.</div></div>
+        <button class="btn primary" id="newSite">+ Client site</button></div>
+      <div class="card"><p class="small">Previews started today: <b>${todayCount}</b>. Daily aim: ${L.DAILY_SITE_AIM}. Nothing here is generated on its own, and these counts are not sales leads.</p>
+        <p class="small muted">A draft is not a public page. Mark it Ready or Shared before anyone with the link can open the unofficial preview. Pausing turns that public link off. Enquiries stay off until the site is live and you turn them on.</p></div>
+      <div class="seg" id="siteSeg">${['all', 'draft', 'ready', 'shared', 'live', 'paused'].map(s => `<button type="button" data-sf="${s}" class="${siteFilter === s ? 'on' : ''}">${s === 'all' ? 'All' : siteStatusLabel[s]}</button>`).join('')}</div>
+      ${shown.length ? shown.map(site => {
+        const account = accounts.find(a => a.client_business_id === site.business_id) || null;
+        const proposal = proposals.find(p => p.client_site_id === site.id || (account && p.client_key === account.client_key)) || null;
+        const ws = (store.workspaces || []).find(w => w.id === site.business_id) || { workspace_kind: 'client', role: 'manager', claim_status: 'invite_pending' };
+        return `<article class="card site-card"><div class="card-head"><h2>${h(site.business_name)}</h2>${siteChip(site.status)}</div>
+          <p class="small">${h(L.workspaceRoleLabel(ws))}${site.capture_enabled ? '' : ' · enquiries off'}</p>
+          <p class="small"><b>${newCount(site.id)}</b> new enquiries for this business</p>
+          ${proposal ? `<p class="small">${proposal.status === 'sent' ? 'You marked the email sent.' : 'Email draft saved, not sent.'}${proposal.email_confidence === 'medium' ? ' Address needs a check.' : ''}</p>` : ''}
+          <div class="row">
+            <button class="btn sm" data-open-ws="${h(site.business_id)}" data-site="${h(site.id)}">Open workspace</button>
+            <a class="btn sm" target="_blank" rel="noopener" href="${h(previewHref(site.public_token))}">Open preview</a>
+            ${account && account.lead_id ? `<button class="btn sm" data-open-lead="${h(account.lead_id)}">Sales lead</button>` : ''}
+            ${proposal ? `<button class="btn sm" data-proposal="${h(proposal.id)}">Email draft</button>` : ''}
+          </div></article>`;
+      }).join('') : '<div class="card empty">No client sites yet. Start one from a sales lead, or add a blank draft.</div>'}
+      <p class="small muted">A preview link is the address of this app in the browser you have open. This screen does not invent a web address, and saving a draft does not publish one.</p>`;
+    $('#newSite').onclick = () => openSiteDraft();
+    $$('#siteSeg button').forEach(b => b.onclick = () => { siteFilter = b.dataset.sf; renderSites(); });
+    $$('[data-open-ws]').forEach(b => b.onclick = async () => {
+      await guard(() => store.switchBusiness(b.dataset.openWs));
+      B = store.business; S = store.state; location.hash = '#/site/' + b.dataset.site;
+    });
+    $$('[data-open-lead]').forEach(b => b.onclick = () => openLead(b.dataset.openLead));
+    $$('[data-proposal]').forEach(b => b.onclick = () => openProposal(b.dataset.proposal));
+  }
+  function renderClientSites() {
+    const sites = S.client_sites || [];
+    const pending = (B.claim_status || 'invite_pending') !== 'claimed';
+    view.innerHTML = `
+      <div class="page-head"><div><h1>Sites</h1><div class="muted small">${(store.role || B.role) === 'manager' ? 'You manage this workspace.' : 'This is the business workspace.'}</div></div></div>
+      ${(store.role || B.role) === 'manager' && pending ? '<div class="notice warn">Setup is waiting. No invitation has been sent, and the client cannot sign in yet. Do not mark this as accepted.</div>' : ''}
+      <p class="small">Enquiries below are for this business. They are not your sales leads. Notes you type on the site can be seen by a future login for this workspace. Email drafts are not stored here.</p>
+      ${sites.length ? sites.map(site => `<article class="card"><div class="card-head"><h2>${h(site.business_name)}</h2>${siteChip(site.status)}</div>
+        <p class="small">${site.capture_enabled ? 'Enquiries are on.' : 'Enquiries are off.'}</p>
+        <div class="row"><a class="btn sm primary" href="#/site/${h(site.id)}">Edit</a><a class="btn sm" target="_blank" rel="noopener" href="${h(previewHref(site.public_token))}">Open preview</a></div></article>`).join('') : '<div class="card empty">No site in this workspace yet.</div>'}`;
+  }
+  async function renderSite(id) {
+    const site = (S.client_sites || []).find(s => s.id === id);
+    if (!site) { view.innerHTML = '<div class="card empty">This site is not in the workspace you have open. <a href="#/sites">Back to sites</a></div>'; return; }
+    const enquiries = (S.client_enquiries || []).filter(e => e.client_site_id === site.id);
+    const counts = { new: 0, contacted: 0, closed: 0 };
+    enquiries.forEach(e => { if (counts[e.status] !== undefined) counts[e.status]++; });
+    const svcText = (site.services || []).map(s => s.detail ? `${s.name} | ${s.detail}` : s.name).join('\n');
+    const pendingManager = (store.role || B.role) === 'manager' && (B.claim_status || 'invite_pending') !== 'claimed';
+    view.innerHTML = `
+      <div class="page-head"><div><h1>${h(site.business_name)}</h1><div class="small">${siteChip(site.status)} ${site.capture_enabled ? 'Enquiries on' : 'Enquiries off'}</div></div>
+        <a class="btn" href="#/sites">All sites</a></div>
+      ${pendingManager ? '<div class="notice warn">Setup is waiting. No invitation has been sent, and the client cannot sign in yet. Do not mark this as accepted.</div>' : ''}
+      <div class="notice">${site.status === 'draft' ? 'This draft is not public. Open preview works while you are signed in on this browser. Mark it Ready when anyone with the link may see the unofficial page.' : site.status === 'paused' ? 'The public link is off while this site is paused. You can still open it while signed in. Enquiries are off.' : site.status === 'live' ? 'This link is the live page. Search engines are asked not to list it. The form saves an enquiry only after you turn that on.' : 'Anyone with this link can open an unofficial design preview. It is not indexed, and it is not the business’s official website. Enquiries are off.'}</div>
+      <div class="card"><label>Preview link</label><input class="input" readonly value="${h(previewHref(site.public_token))}">
+        <div class="row mt"><a class="btn sm" target="_blank" rel="noopener" href="${h(previewHref(site.public_token))}">Open preview</a></div></div>
+      <form id="siteForm" class="card">
+        <div class="field"><label>Business name</label><input class="input" name="business_name" required maxlength="120" value="${h(site.business_name || '')}"></div>
+        <div class="field"><label>What they do</label><input class="input" name="trade" maxlength="160" value="${h(site.trade || '')}"></div>
+        <div class="grid-2f"><div class="field"><label>Phone (shown as text)</label><input class="input" name="phone" value="${h(site.phone || '')}"></div>
+        <div class="field"><label>Email (shown as text)</label><input class="input" name="email" value="${h(site.email || '')}"></div></div>
+        <div class="field"><label>Area</label><input class="input" name="service_area" maxlength="120" value="${h(site.service_area || '')}"></div>
+        <div class="field"><label>About</label><textarea class="input" name="about" rows="4" maxlength="2000">${h(site.about || '')}</textarea></div>
+        <div class="field"><label>Services, one per line. Optional detail after a |</label><textarea class="input" name="services" rows="4">${h(svcText)}</textarea></div>
+        <div class="field"><label>Look</label><select class="input" name="template"><option value="plain" ${site.template !== 'bold' ? 'selected' : ''}>Plain</option><option value="bold" ${site.template === 'bold' ? 'selected' : ''}>Bold</option></select></div>
+        <div class="field"><label>Preview color</label><input class="input" name="accent" value="${h(site.accent || '#334155')}" maxlength="7"></div>
+        <div class="field"><label>Workspace note</label><textarea class="input" name="workspace_note" rows="3">${h(site.workspace_note || '')}</textarea>
+          <p class="small muted">A future login for this business could read this note. Do not put sales strategy or email drafts here.</p></div>
+        <button class="btn primary" type="submit">Save site</button>
+      </form>
+      <div class="card"><h2>Status</h2>
+        <p class="small">Draft, ready, and shared pages stay unofficial and do not collect enquiries. Live requires you to record that the business approved it. Turning enquiries on is a second step.</p>
+        <div class="row">
+          <button class="btn sm" data-st="draft">Draft</button>
+          <button class="btn sm" data-st="ready">Ready</button>
+          <button class="btn sm" data-st="shared">Shared</button>
+          <button class="btn sm" id="approveBtn">Business approved</button>
+          <button class="btn sm" id="liveBtn">Make live</button>
+          <button class="btn sm" id="captureBtn">${site.capture_enabled ? 'Turn enquiries off' : 'Turn enquiries on'}</button>
+          <button class="btn sm" data-st="paused">Pause</button>
+        </div>
+        <p class="small muted">${site.approved_at ? 'You recorded approval ' + h(fmtDateTime(site.approved_at)) + '.' : 'Approval is not recorded.'}</p>
+      </div>
+      <div class="card"><h2>Enquiries for this business</h2>
+        <p class="small">New ${counts.new} · Contacted ${counts.contacted} · Closed ${counts.closed}. Source is what the form actually sent. A phone number on the page is not a call and is not counted.</p>
+        ${enquiries.length ? enquiries.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map(e => `<div class="list-item"><div class="li-main"><div class="li-title">${h(e.name)}</div>
+          <div class="li-sub">${h(e.phone || '')} ${h(e.email || '')}<br>${h(e.service || '')} ${h(e.message || '')}</div>
+          <div class="small muted">${h(e.source || 'Website form')} · ${h(fmtDateTime(e.created_at))}</div></div>
+          <select class="input sm-select" data-enq="${h(e.id)}">${['new', 'contacted', 'closed'].map(st => `<option ${e.status === st ? 'selected' : ''}>${st}</option>`).join('')}</select></div>`).join('') : '<div class="empty">No enquiries yet.</div>'}
+      </div>`;
+    $('#siteForm').onsubmit = async e => {
+      e.preventDefault(); const f = e.target;
+      const patch = { business_name: fieldVal(f, 'business_name'), trade: fieldVal(f, 'trade'), phone: fieldVal(f, 'phone'), email: fieldVal(f, 'email'), service_area: fieldVal(f, 'service_area'), about: fieldVal(f, 'about'), services: servicesFromText(fieldVal(f, 'services')), template: fieldVal(f, 'template'), accent: fieldVal(f, 'accent'), workspace_note: fieldVal(f, 'workspace_note') };
+      try { L.applySitePatch(site, patch); } catch (err) { return toast(err.message); }
+      await guard(() => store.update('client_sites', site.id, patch), 'Saved');
+      rerender();
+    };
+    $$('[data-st]').forEach(b => b.onclick = async () => {
+      try { L.applySitePatch(site, { status: b.dataset.st }); } catch (err) { return toast(err.message); }
+      await guard(() => store.update('client_sites', site.id, { status: b.dataset.st }), 'Updated'); rerender();
+    });
+    $('#approveBtn').onclick = async () => {
+      if (!confirm('Record that this business approved the design? This does not email them, and it does not turn enquiries on.')) return;
+      await guard(() => store.update('client_sites', site.id, { approved_at: new Date().toISOString() }), 'Approval recorded'); rerender();
+    };
+    $('#liveBtn').onclick = async () => {
+      if (!site.approved_at) return toast('Record approval first.');
+      await guard(() => store.update('client_sites', site.id, { status: 'live' }), 'Live'); rerender();
+    };
+    $('#captureBtn').onclick = async () => {
+      if (site.capture_enabled) { await guard(() => store.update('client_sites', site.id, { capture_enabled: false, status: site.status === 'live' ? 'paused' : site.status }), 'Enquiries off'); return rerender(); }
+      if (!confirm('Turn on enquiry saving? Only after the business has approved this site. Submissions are saved here, not in your sales leads. Nothing is emailed or texted.')) return;
+      try { L.applySitePatch(site, { capture_enabled: true, status: 'live' }); } catch (err) { return toast(err.message); }
+      await guard(() => store.update('client_sites', site.id, { capture_enabled: true, status: 'live' }), 'Enquiries on'); rerender();
+    };
+    $$('[data-enq]').forEach(s => s.onchange = async () => { await guard(() => store.update('client_enquiries', s.dataset.enq, { status: s.value }), 'Updated'); });
+  }
+  function openProposal(id) {
+    const p = (S.site_proposals || []).find(x => x.id === id); if (!p) return;
+    openModal('Email draft', `<form id="f">
+      ${p.email_confidence === 'medium' ? '<div class="notice warn">This address is only medium confidence, from an older listing. Check it before you send.</div>' : ''}
+      <div class="field"><label>To</label><input class="input" id="pTo" name="to_email" type="email" value="${h(p.to_email || '')}"></div>
+      <div class="field"><label>Subject</label><input class="input" id="pSub" name="subject" value="${h(p.subject || '')}"></div>
+      <div class="field"><label>Message</label><textarea class="input" id="pBody" name="body" rows="10">${h(p.body || '')}</textarea></div>
+      <p class="small" id="pProv">${h(p.provenance || '')}</p>
+      <div id="pChecks"></div>
+      ${p.email_confidence === 'medium' ? '<label class="checkline"><input type="checkbox" id="pChecked"> I checked this address</label>' : ''}
+      <div class="row"><button class="btn primary" type="button" id="pMail">Open in my email app</button><button class="btn" type="button" id="pGmail">Open in Gmail</button><button class="btn" type="button" id="pCopy">Copy email</button></div>
+      <div id="pConfirm" hidden><b>Did you send it?</b><div class="row"><button class="btn primary" type="button" id="pSent">Yes, I sent it</button><button class="btn" type="button" id="pNot">Not yet</button></div></div>
+      <p class="small muted">Opening your email app does not mark this sent. The CRM never sends the message.</p>
+      <div class="modal-actions"><button class="btn" type="button" id="pLink">Add preview link</button><button class="btn" type="submit">Save draft</button></div></form>`, m => {
+      const body = $('#pBody', m), to = $('#pTo', m), sub = $('#pSub', m);
+      const refresh = () => {
+        const cur = { to: to.value.trim(), subject: sub.value, body: body.value, outreach: true };
+        const chk = L.checkEmail(cur, B);
+        $('#pChecks', m).innerHTML = chk.errors.map(x => `<div class="notice bad small">${h(x)}</div>`).join('') + chk.warnings.map(x => `<div class="notice warn small">${h(x)}</div>`).join('');
+        return { cur, chk, links: L.emailLinks(cur.to, cur.subject, cur.body) };
+      };
+      const gate = () => p.email_confidence !== 'medium' || $('#pChecked', m).checked;
+      refresh();
+      [to, sub, body].forEach(el => el.addEventListener('input', refresh));
+      const showConfirm = () => { $('#pConfirm', m).hidden = false; };
+      $('#pMail', m).onclick = () => { const r = refresh(); if (!gate() || !r.chk.ok || !r.links.mailtoOk) return; openLink(r.links.mailto, false); showConfirm(); };
+      $('#pGmail', m).onclick = () => { const r = refresh(); if (!gate() || !r.chk.ok || !r.links.gmailOk) return; openLink(r.links.gmail, true); showConfirm(); };
+      $('#pCopy', m).onclick = async () => { const r = refresh(); if (!gate()) return; const ok = await copyText(`To: ${r.cur.to}\nSubject: ${r.cur.subject}\n\n${r.cur.body}`); toast(ok ? 'Copied. Paste it into your email app.' : 'Could not copy.'); if (r.cur.to) showConfirm(); };
+      $('#pNot', m).onclick = () => { $('#pConfirm', m).hidden = true; };
+      $('#pLink', m).onclick = async () => {
+        let token = '';
+        try {
+          const sites = await store.listManagedSites();
+          const match = sites.find(s => s.id === p.client_site_id);
+          token = match && match.public_token;
+        } catch (e) { token = ''; }
+        if (!token) return toast('There is no preview link on this draft yet.');
+        const href = previewHref(token);
+        if (!body.value.includes(href)) body.value = body.value.trim() + '\n\nPreview:\n' + href;
+        refresh();
+      };
+      $('#pSent', m).onclick = async () => {
+        const r = refresh();
+        await guard(() => store.update('site_proposals', p.id, { to_email: r.cur.to, subject: r.cur.subject, body: r.cur.body, status: 'sent', sent_at: new Date().toISOString() }));
+        if (p.lead_id) {
+          await guard(() => store.insert('emails', { lead_id: p.lead_id, to_email: r.cur.to, subject: r.cur.subject, body: r.cur.body, template: 'intro', source: 'Site proposal', status: 'sent', sent_at: new Date().toISOString() }));
+          const lead = S.leads.find(l => l.id === p.lead_id);
+          if (lead) await guard(() => store.update('leads', lead.id, L.contactedPatch(lead)));
+        }
+        toast('Marked sent'); closeModal(); rerender();
+      };
+      $('#f', m).onsubmit = async e => {
+        e.preventDefault(); const r = refresh();
+        await guard(() => store.update('site_proposals', p.id, { to_email: r.cur.to, subject: r.cur.subject, body: r.cur.body, status: 'draft', sent_at: null }), 'Draft saved');
+        closeModal(); rerender();
+      };
+    });
+  }
+
   /* ---------------- example data (clearly labeled) ---------------- */
   function photoSVG(label, color) {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="220"><rect width="320" height="220" fill="${color}"/><g fill="rgba(255,255,255,.25)"><rect x="0" y="150" width="320" height="70"/><polygon points="40,150 120,70 200,150"/><polygon points="150,150 230,90 310,150"/></g><text x="16" y="34" font-family="Arial" font-size="20" font-weight="bold" fill="#fff">${label}</text><text x="16" y="206" font-family="Arial" font-size="12" fill="#fff">example photo</text></svg>`;
@@ -1118,6 +1387,14 @@
       business: { name: 'Peachtree Home Services', accent: '#ea580c', phone: '(404) 555-0100', email: 'hello@peachtree-example.com', postal_address: '123 Example St, Atlanta, GA 30303',
         google_review_link: 'https://g.page/r/EXAMPLE/review', tax_rate: 8.9, lead_form_enabled: true, review_sms: L.DEFAULT_TEMPLATES.review_sms, review_email: L.DEFAULT_TEMPLATES.review_email, review_followup: L.DEFAULT_TEMPLATES.review_followup, services: L.EXAMPLE_SERVICES.map(x => Object.assign({}, x)), example: true },
       customers: C, leads, jobs, documents: docs, tasks, review_requests: reviews
+    });
+    await store.bootstrapClientPreview({
+      salesBusinessId: 'demo',
+      clientKey: 'example:painting',
+      name: 'Example Painting Co',
+      leadId: null,
+      site: { business_name: 'Example Painting Co', trade: 'Interior painting', phone: '(404) 555-0148', email: '', service_area: 'Example City', about: 'Interior painting for homes. This is example data, not a real company.', services: [{ name: 'Interior painting', detail: 'Walls and ceilings.' }], template: 'plain', accent: '#334155' },
+      proposal: Object.assign(L.buildSiteProposal({ businessName: 'Example Painting Co', senderName: 'Peachtree Home Services' }), { to_email: 'owner@example.com', email_confidence: 'unknown', provenance: 'Example data only.', notes: 'Example sales note. Not a real prospect.' })
     });
     B = store.business; S = store.state; await syncAutoTasks(); applyBrand();
   }

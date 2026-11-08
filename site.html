@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="googlebot" content="noindex, nofollow">
+<title>Design preview</title>
+<style>
+  :root{--accent:#334155}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0f172a;background:#f8fafc}
+  main{max-width:720px;margin:0 auto;padding:16px}
+  .banner{background:#fef3c7;color:#78350f;border:1px solid #fcd34d;border-radius:12px;padding:12px 14px;font-weight:700}
+  .note,.fine,.paused{color:#475569;font-size:14px}
+  .paused{background:#fee2e2;color:#991b1b;padding:10px 12px;border-radius:10px}
+  .sheet{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:18px}
+  .tpl-bold{border-top:8px solid var(--accent)}
+  h1{font-size:28px;line-height:1.2;margin:8px 0}
+  .trade{font-weight:700;color:var(--accent);margin:0 0 8px}
+  .about{white-space:pre-wrap}
+  ul.services{padding-left:18px}
+  .fact{margin:6px 0}.fact span{display:inline-block;min-width:4.5em;color:#64748b;font-size:13px;font-weight:700}
+  label{display:block;font-size:13px;font-weight:700;margin:10px 0 4px}
+  input,select,textarea{width:100%;max-width:100%;font-size:16px;line-height:1.4;padding:11px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
+  textarea{min-height:90px}
+  button{margin-top:14px;width:100%;padding:12px;border:0;border-radius:12px;background:var(--accent);color:#fff;font:inherit;font-weight:700;cursor:pointer}
+  button.sim{background:#fff;color:#0f172a;border:1px dashed #94a3b8}
+  .check{display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:14px}
+  .check input{width:18px;height:18px;margin-top:2px}
+  .hp{position:absolute;left:-9999px;height:0;overflow:hidden}
+  .err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:10px}
+  .done{text-align:center;padding:28px 12px}
+</style>
+</head>
+<body>
+<main id="root">
+  <p class="banner">Unofficial design preview — not the business’s official website</p>
+  <p class="note">Anyone with this link can open this page. Search engines are asked not to list it.</p>
+</main>
+<script src="config.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/store.js"></script>
+<script>
+(function () {
+  const L = window.CRMLogic, ST = window.CRMStore, CFG = window.CRM_CONFIG || {};
+  const root = document.getElementById('root');
+  const token = new URLSearchParams(location.search).get('t') || '';
+  const started = Date.now();
+  const src = L.cleanEnquirySource(new URLSearchParams(location.search).get('src') || '');
+  const check = L.checkConfig(CFG);
+  function show(html) { root.innerHTML = html; const s = root.querySelector('.sheet'); if (s) document.documentElement.style.setProperty('--accent', getComputedStyle(document.documentElement).getPropertyValue('--accent')); }
+  function paint(data) {
+    if (data && /^#[0-9a-fA-F]{6}$/.test(data.accent || '')) document.documentElement.style.setProperty('--accent', data.accent);
+    document.title = ((data && data.business_name) || 'Design preview') + ' — design preview';
+    root.innerHTML = L.renderPublicSite(data);
+    const sim = document.getElementById('sim');
+    if (sim) sim.onclick = () => { const n = document.getElementById('simNote'); if (n) n.hidden = false; };
+    const form = document.getElementById('enq');
+    if (form) form.onsubmit = onSubmit;
+  }
+  function fail(msg) {
+    const err = document.getElementById('err');
+    const btn = formButton();
+    if (err) { err.hidden = false; err.textContent = msg; }
+    if (btn) btn.disabled = false;
+  }
+  function formButton() { const f = document.getElementById('enq'); return f ? f.querySelector('button') : null; }
+  async function onSubmit(e) {
+    e.preventDefault();
+    const f = e.target, btn = formButton();
+    const err = document.getElementById('err'); if (err) err.hidden = true;
+    if (btn) btn.disabled = true;
+    const payload = {
+      name: f.name.value, phone: f.phone.value, email: f.email.value, service: f.service.value, message: f.message.value,
+      sms_ok: f.sms_ok.checked, website: f.website.value, company_fax: f.company_fax.value, started_at: started, source: src
+    };
+    try {
+      let id = null;
+      if (check.mode === 'cloud' && check.ok) {
+        if (typeof supabase === 'undefined') await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/supabase.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+        const client = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: false } });
+        const gate = L.cleanEnquiry(payload);
+        if (!gate.ok) throw new Error(gate.error);
+        id = await ST.submitSiteEnquiry(client, {
+          p_token: token, p_name: gate.enquiry.name, p_phone: gate.enquiry.phone, p_email: gate.enquiry.email,
+          p_service: gate.enquiry.service, p_message: gate.enquiry.message, p_sms_ok: gate.enquiry.sms_ok,
+          p_source: gate.enquiry.source, p_started_at: new Date(started).toISOString(), p_website: payload.website, p_company_fax: payload.company_fax
+        });
+      } else {
+        id = await ST.submitDemoEnquiry(token, payload);
+      }
+      if (!id) throw new Error('That did not go through.');
+      root.innerHTML = '<div class="sheet done"><h1>Saved</h1><p class="note">Your enquiry was saved for this business. This page did not send a text or an email.</p></div>';
+    } catch (ex) {
+      fail(ex && ex.message ? ex.message : 'That did not go through.');
+    }
+  }
+  async function boot() {
+    try {
+      if (!/^[0-9a-f-]{36}$/i.test(token)) { root.innerHTML = '<p class="miss">This preview link is not active.</p>'; return; }
+      let data = null;
+      if (check.mode === 'cloud' && check.ok) {
+        if (typeof supabase === 'undefined') await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/supabase.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+        const client = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+        data = await ST.getPublicSite(client, token);
+        if (!data) data = await ST.getMemberSite(client, token);
+        if (data) data = L.publicSitePayload(data);
+      } else data = ST.readDemoPublicSite(token) || ST.readDemoMemberSite(token);
+      if (!data) { root.innerHTML = '<p class="miss">This page is not available.</p>'; return; }
+      paint(data);
+    } catch (e) {
+      root.innerHTML = '<p class="banner">Unofficial design preview — not the business’s official website</p><p class="err">This preview could not be loaded.</p>';
+    }
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

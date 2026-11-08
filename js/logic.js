@@ -603,6 +603,188 @@
     return ctx.lead ? 'thanks_call' : 'on_my_way';
   }
 
+  /* ---------- v2.9: client site previews (structured fields only; the CRM never sends email or SMS) ---------- */
+  const UNOFFICIAL_LABEL = 'Unofficial design preview — not the business’s official website';
+  const DAILY_SITE_AIM = 3;
+  const SITE_STATUSES = ['draft', 'ready', 'shared', 'live', 'paused'];
+  const clipText = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').trim().slice(0, n);
+  function cleanSiteServices(list) {
+    const out = [];
+    (Array.isArray(list) ? list : []).forEach(sv => {
+      if (!sv || typeof sv !== 'object' || out.length >= 12) return;
+      const name = clipText(sv.name, 80); if (!name) return;
+      out.push({ name, detail: clipText(sv.detail, 300) });
+    });
+    return out;
+  }
+  function cleanSiteContent(input) {
+    input = input || {};
+    const email = clipText(input.email, 200);
+    const accent = /^#[0-9a-fA-F]{6}$/.test(input.accent || '') ? input.accent : '#334155';
+    return {
+      business_name: clipText(input.business_name, 120),
+      trade: clipText(input.trade, 160),
+      phone: clipText(input.phone, 40),
+      email: isEmail(email) ? email : '',
+      service_area: clipText(input.service_area, 120),
+      about: clipText(input.about, 2000),
+      services: cleanSiteServices(input.services),
+      template: input.template === 'bold' ? 'bold' : 'plain',
+      accent
+    };
+  }
+  function siteIsPublic(status) {
+    return status === 'ready' || status === 'shared' || status === 'live';
+  }
+  function siteCollects(row) {
+    return !!(row && row.status === 'live' && row.capture_enabled && row.approved_at);
+  }
+  function publicSitePayload(row) {
+    if (!row || typeof row !== 'object') return null;
+    const content = cleanSiteContent(row);
+    if (!content.business_name && !row.public_token) return null;
+    const status = SITE_STATUSES.includes(row.status) ? row.status : 'draft';
+    const fromServer = row.collects === true || row.collects === 'true';
+    const approved = !!row.approved_at || fromServer;
+    const collects = status === 'live' && (fromServer || (!!row.capture_enabled && !!row.approved_at));
+    return Object.assign({}, content, {
+      status, approved, collects,
+      capture_enabled: collects,
+      public_token: clipText(row.public_token, 40)
+    });
+  }
+  function applySitePatch(row, patch) {
+    const next = Object.assign({}, row, patch || {});
+    next.id = row.id; next.business_id = row.business_id; next.public_token = row.public_token;
+    next.origin_key = row.origin_key; next.created_at = row.created_at;
+    const content = cleanSiteContent(Object.assign({}, row, patch || {}));
+    Object.assign(next, content);
+    if (patch && patch.workspace_note !== undefined) next.workspace_note = clipText(patch.workspace_note, 5000);
+    else next.workspace_note = clipText(row.workspace_note, 5000);
+    if (!SITE_STATUSES.includes(next.status)) next.status = row.status || 'draft';
+    if (patch && patch.capture_enabled === true && (next.status !== 'live' || !next.approved_at)) throw new Error('Turn enquiries on only after the site is live and the business has approved it.');
+    if (next.status !== 'live') next.capture_enabled = false;
+    if (next.status === 'live' && !next.approved_at) throw new Error('Mark the business as approved before making the site live.');
+    return next;
+  }
+  function cleanProposal(input) {
+    input = input || {};
+    const conf = ['verified', 'medium', 'unknown'].includes(input.email_confidence) ? input.email_confidence : 'unknown';
+    const to = clipText(input.to_email, 320);
+    return {
+      to_email: isEmail(to) ? to : '',
+      email_confidence: conf,
+      email_note: clipText(input.email_note, 500),
+      subject: clipText(input.subject, 500),
+      body: clipText(input.body, 20000),
+      provenance: clipText(input.provenance, 4000),
+      notes: clipText(input.notes, 5000),
+      send_ready: false,
+      preview_link_ready: false
+    };
+  }
+  function buildSiteProposal(opts) {
+    opts = opts || {};
+    const name = clipText(opts.businessName, 120) || 'the business';
+    const signer = clipText(opts.signer || opts.senderName, 80);
+    const subject = `Unofficial design preview for ${name}`;
+    const body = [
+      `Hello ${name} team,`,
+      '',
+      `I drafted an unofficial design preview for ${name}. It is not your official website. It uses only the business name and the services already on file. It does not include reviews, ratings, prices, or a guarantee.`,
+      '',
+      'That draft does not collect enquiries. Its buttons do not call, text, or email anyone.',
+      '',
+      'This is not a price quote, and I have not sent this message.',
+      '',
+      signer
+    ].filter((line, i, arr) => line !== '' || arr[i - 1] !== '').join('\n').replace(/\n$/, '');
+    return {
+      subject, body, outreach: true, to_email: '', email_confidence: 'unknown', email_note: '', provenance: '', notes: '',
+      send_ready: false, preview_link_ready: false
+    };
+  }
+  function clientKeyForLead(id) {
+    const s = String(id || '').trim().toLowerCase();
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s) ? 'lead:' + s : '';
+  }
+  function workspaceRoleLabel(w) {
+    w = w || {};
+    const client = (w.workspace_kind || 'own') === 'client';
+    const pending = (w.claim_status || (client ? 'invite_pending' : 'claimed')) !== 'claimed';
+    if (client && w.role === 'manager') return pending ? 'manager · invite not sent' : 'manager';
+    if (client && w.role === 'owner') return pending ? 'owner · setup still open' : 'your business';
+    if (w.role === 'owner') return 'your account';
+    return w.role || 'member';
+  }
+  function sitesStartedOn(sites, now) {
+    const day = isoDate(now || new Date());
+    return (sites || []).filter(s => s.created_at && isoDate(s.created_at) === day).length;
+  }
+  function cleanEnquirySource(source) {
+    const s = clipText(source, 41);
+    return /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,40}$/.test(s) ? s : 'Website form';
+  }
+  function cleanEnquiry(form) {
+    form = form || {};
+    if (String(form.website || '').trim() || String(form.company_fax || '').trim()) return { ok: false, error: 'That did not go through.' };
+    if (form.started_at && Date.now() - Number(form.started_at) < 3000) return { ok: false, error: 'That did not go through.' };
+    const enquiry = {
+      name: clipText(form.name, 200), phone: clipText(form.phone, 40), email: clipText(form.email, 200),
+      service: clipText(form.service, 200), message: clipText(form.message, 2000),
+      sms_ok: form.sms_ok === true || form.sms_ok === 'on' || form.sms_ok === 'yes',
+      source: cleanEnquirySource(form.source)
+    };
+    if (!enquiry.name) return { ok: false, error: 'Please enter your name.' };
+    if (!enquiry.phone && !enquiry.email) return { ok: false, error: 'Please enter a phone number or email so the business can reply.' };
+    if (enquiry.email && !isEmail(enquiry.email)) return { ok: false, error: 'That email address looks incomplete.' };
+    if (enquiry.phone && digits(enquiry.phone).replace('+', '').length < 7) return { ok: false, error: 'That phone number looks too short.' };
+    if (!enquiry.phone) enquiry.sms_ok = false;
+    return { ok: true, enquiry };
+  }
+  function enquiryOpen(site) {
+    const p = publicSitePayload(site);
+    if (!p) return { ok: false, error: 'This preview link is not active.' };
+    if (!p.collects) return { ok: false, error: 'This page is not collecting enquiries.' };
+    return { ok: true };
+  }
+  function renderPublicSite(raw) {
+    const s = publicSitePayload(raw);
+    if (!s) return '<p class="miss">This preview link is not active.</p>';
+    const shareNote = 'Anyone with this link can open this page. Search engines are asked not to list it.';
+    const banner = s.status === 'draft'
+      ? `<div class="banner">${esc(UNOFFICIAL_LABEL)}</div><p class="note">This draft is not a public page. It opens only for a signed-in manager.</p>`
+      : s.status === 'paused'
+        ? '<p class="note">The public link is off while this page is paused. It opens only for a signed-in manager.</p>'
+        : s.status === 'live'
+          ? `<p class="note">${shareNote}</p>`
+          : `<div class="banner">${esc(UNOFFICIAL_LABEL)}</div><p class="note">${shareNote}</p>`;
+    const paused = s.status === 'paused' ? '<p class="paused">This page is paused. It is not collecting enquiries.</p>' : '';
+    const services = (s.services || []).map(sv => `<li><strong>${esc(sv.name)}</strong>${sv.detail ? ` <span>${esc(sv.detail)}</span>` : ''}</li>`).join('');
+    const facts = [
+      s.service_area ? `<p class="fact"><span>Area</span> ${esc(s.service_area)}</p>` : '',
+      s.phone ? `<p class="fact"><span>Phone</span> ${esc(s.phone)}</p>` : '',
+      s.email ? `<p class="fact"><span>Email</span> ${esc(s.email)}</p>` : ''
+    ].join('');
+    let action;
+    if (s.collects) {
+      const opts = (s.services || []).map(sv => `<option>${esc(sv.name)}</option>`).join('') || '<option>General question</option>';
+      action = `<form id="enq"><label for="nm">Name *</label><input id="nm" name="name" required maxlength="200" autocomplete="name">
+        <label for="ph">Phone</label><input id="ph" name="phone" type="tel" maxlength="40" autocomplete="tel">
+        <label for="em">Email</label><input id="em" name="email" type="email" maxlength="200" autocomplete="email">
+        <label for="sv">What do you need?</label><select id="sv" name="service">${opts}</select>
+        <label for="ms">Details</label><textarea id="ms" name="message" maxlength="2000"></textarea>
+        <label class="check"><input type="checkbox" name="sms_ok"> OK to text me about this request. The business sends any text, not this page.</label>
+        <div class="hp" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label><label>Fax <input name="company_fax" tabindex="-1" autocomplete="off"></label></div>
+        <button type="submit">Send to this business</button>
+        <p class="fine">This saves an enquiry for this business. It does not start a call, a text, or an email.</p>
+        <p class="err" id="err" hidden></p></form>`;
+    } else {
+      action = `<button type="button" class="sim" id="sim">Request a quote</button><p class="fine" id="simNote" hidden>This is a design preview. This button does not send a message, start a call, or open a text.</p><p class="fine">Enquiries are turned off. Nothing is saved from this page.</p>`;
+    }
+    return `<article class="sheet tpl-${s.template === 'bold' ? 'bold' : 'plain'}" data-status="${esc(s.status)}" data-collects="${s.collects ? 'yes' : 'no'}">${banner}${paused}<h1>${esc(s.business_name || 'Design preview')}</h1>${s.trade ? `<p class="trade">${esc(s.trade)}</p>` : ''}${s.about ? `<p class="about">${esc(s.about)}</p>` : ''}${services ? `<ul class="services">${services}</ul>` : ''}${facts}${action}</article>`;
+  }
+
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   return { DAY, LEAD_STATUSES, DOC_STATUSES, DEFAULT_TEMPLATES, STOP_WORDS, round2, isoDate, addDays, parseDay, money, esc,
@@ -612,5 +794,6 @@
     OPT_OUT_LINE, MAILTO_MAX, GMAIL_MAX, EMAIL_TEMPLATES, isEmail, greetingName, emailVars, complianceFooter, hasOptOut, buildEmail, checkEmail,
     gmailLink, emailLinks, emailHistory, emailDuplicate, replyState, contactedPatch,
     SERVICES_MAX, cleanService, cleanServices, serviceLine, addServiceToItems, searchServices, EXAMPLE_SERVICES, howAmIDoing,
-    STOP_LINE, TEXT_TEMPLATES, textTemplate, buildText, hasStopLine, textCheck, suggestText };
+    STOP_LINE, TEXT_TEMPLATES, textTemplate, buildText, hasStopLine, textCheck, suggestText,
+    UNOFFICIAL_LABEL, DAILY_SITE_AIM, SITE_STATUSES, cleanSiteServices, cleanSiteContent, siteIsPublic, siteCollects, publicSitePayload, applySitePatch, cleanProposal, buildSiteProposal, clientKeyForLead, workspaceRoleLabel, sitesStartedOn, cleanEnquirySource, cleanEnquiry, enquiryOpen, renderPublicSite };
 });

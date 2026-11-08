@@ -3,14 +3,15 @@
  * Safety rules (do not loosen):
  *  - Only same-origin GET requests for files on the SHELL list below are ever cached.
  *  - Supabase (API, auth, storage, RPC) is a different origin, so it is never touched or cached.
- *  - doc.html (customer quote/invoice pages), lead-form.html (and its submissions), photos and any
- *    request with an Authorization header are passed straight to the network, never cached.
+ *  - doc.html (customer quote/invoice pages), lead-form.html, site.html (previews and
+ *    enquiry posts, including draft and paused pages), photos and any request with an
+ *    Authorization header go straight to the network.
  *  - Shell files are fetched network-first, so when online you always get the newest files;
  *    the cache is only the offline fallback.
  * Releasing a new version: change VERSION. Old caches are deleted on activate, and the open app
  * shows "Update available - Reload".
  */
-const VERSION = 'v2.8.0';
+const VERSION = 'v2.9.0';
 const CACHE = 'trade-crm-shell-' + VERSION;
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'config.js', 'js/logic.js', 'js/store.js',
