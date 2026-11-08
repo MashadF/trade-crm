@@ -1,2 +1,6 @@
 node_modules/
 .env*
+tests/
+test_screens.py
+supabase/test/
+screenshots/

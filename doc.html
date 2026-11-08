@@ -68,8 +68,9 @@
   async function load() {
     if (client) return ST.getPublicDocument(client, token);
     const d = demo.findDocByToken(token); if (!d || d.status === 'draft') return null;
-    const c = demo.state.customers.find(x => x.id === d.customer_id) || {};
-    return { doc: d, business: demo.business, customer: { name: c.name, address: c.address } };
+    const c = (demo.findCustomer ? demo.findCustomer(d.customer_id) : null) || {};
+    const b = (demo.businessById && demo.businessById(d.business_id)) || demo.business;
+    return { doc: d, business: b, customer: { name: c.name, address: c.address } };
   }
   async function accept(name) {
     if (client) return ST.acceptPublicQuote(client, token, name);

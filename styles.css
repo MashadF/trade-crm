@@ -34,12 +34,13 @@ h3{font-size:15px;margin:0 0 8px}
 
 /* Tab bar (phone) */
 .tabbar{position:fixed;bottom:0;left:0;right:0;z-index:30;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
-.tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 9px;color:var(--muted);font-size:11px;font-weight:600}
+.tabbar a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 9px;color:var(--muted);font-size:11px;font-weight:600;min-width:0}
 .tabbar svg{width:22px;height:22px;fill:currentColor}
 .tabbar a.active{color:var(--accent)}
 
 /* Desktop: sidebar nav */
 @media (min-width:900px){
+  .ws-bar{margin-left:var(--sidebar)}
   .topbar{padding-left:calc(var(--sidebar) + 24px)}
   .topbar .brand{position:fixed;left:0;top:0;width:var(--sidebar);height:61px;padding:0 18px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--card)}
   .tabbar{top:61px;bottom:0;right:auto;width:var(--sidebar);flex-direction:column;border-top:0;border-right:1px solid var(--line);padding:12px 10px;gap:2px}
@@ -182,7 +183,14 @@ a.card{color:inherit;text-decoration:none;transition:transform .1s}a.card:hover{
 @media (max-width:600px){.mode-pill{display:none}.brand-sub{display:none}}
 .nav-count{margin-left:auto;background:var(--danger);color:#fff;font-size:11px;min-width:18px;height:18px;border-radius:9px;display:inline-grid;place-items:center;padding:0 5px}
 @media (max-width:899px){.tabbar a{position:relative}.nav-count{position:absolute;top:3px;left:calc(50% + 6px);margin:0}}
-body.auth-mode .tabbar{display:none}
+body.auth-mode .tabbar,body.auth-mode #workspaceBar{display:none}
+.ws-bar{display:flex;gap:8px;align-items:center;padding:8px 16px;background:var(--card);border-bottom:1px solid var(--line);overflow:hidden;min-width:0;box-sizing:border-box}
+.ws-bar label{font-size:13px;font-weight:700;color:var(--muted);flex:none}
+.ws-pick{flex:1;min-width:0;font-size:16px}
+.site-card h2{min-width:0}
+.site-draft{background:#f1f5f9;color:#475569}.site-ready{background:#e0f2fe;color:#075985}.site-shared{background:#fef3c7;color:#92400e}.site-live{background:#dcfce7;color:#166534}.site-paused{background:#fee2e2;color:#991b1b}
+#siteSeg{display:flex;flex-wrap:wrap;max-width:100%}
+.row.mt{margin-top:8px}
 body.auth-mode .view{margin-left:0;max-width:none}
 body.auth-mode .topbar{display:none}
 .auth-wrap{min-height:calc(100vh - 40px);display:grid;place-items:center;padding:20px 0}
