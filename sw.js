@@ -3,8 +3,9 @@
  * Safety rules (do not loosen):
  *  - Only same-origin GET requests for files on the SHELL list below are ever cached.
  *  - Supabase (API, auth, storage, RPC) is a different origin, so it is never touched or cached.
- *  - doc.html (customer quote/invoice pages), lead-form.html, site.html (public previews and
- *    enquiry posts), photos and any request with an Authorization header go straight to the network.
+ *  - doc.html (customer quote/invoice pages), lead-form.html, site.html (previews and
+ *    enquiry posts, including draft and paused pages), photos and any request with an
+ *    Authorization header go straight to the network.
  *  - Shell files are fetched network-first, so when online you always get the newest files;
  *    the cache is only the offline fallback.
  * Releasing a new version: change VERSION. Old caches are deleted on activate, and the open app

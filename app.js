@@ -1157,7 +1157,7 @@
       <div class="page-head"><div><h1>Sites</h1><div class="muted small">Each client has their own workspace. You are the manager. An invitation is not sent from here.</div></div>
         <button class="btn primary" id="newSite">+ Client site</button></div>
       <div class="card"><p class="small">Previews started today: <b>${todayCount}</b>. Daily aim: ${L.DAILY_SITE_AIM}. Nothing here is generated on its own, and these counts are not sales leads.</p>
-        <p class="small muted">A preview link can be opened by anyone who has it. It is not indexed. It is not the business's official website until you say they approved it. Enquiries stay off until you turn them on after that.</p></div>
+        <p class="small muted">A draft is not a public page. Mark it Ready or Shared before anyone with the link can open the unofficial preview. Pausing turns that public link off. Enquiries stay off until the site is live and you turn them on.</p></div>
       <div class="seg" id="siteSeg">${['all', 'draft', 'ready', 'shared', 'live', 'paused'].map(s => `<button type="button" data-sf="${s}" class="${siteFilter === s ? 'on' : ''}">${s === 'all' ? 'All' : siteStatusLabel[s]}</button>`).join('')}</div>
       ${shown.length ? shown.map(site => {
         const account = accounts.find(a => a.client_business_id === site.business_id) || null;
@@ -1207,7 +1207,7 @@
       <div class="page-head"><div><h1>${h(site.business_name)}</h1><div class="small">${siteChip(site.status)} ${site.capture_enabled ? 'Enquiries on' : 'Enquiries off'}</div></div>
         <a class="btn" href="#/sites">All sites</a></div>
       ${pendingManager ? '<div class="notice warn">Setup is waiting. No invitation has been sent, and the client cannot sign in yet. Do not mark this as accepted.</div>' : ''}
-      <div class="notice">Anyone with the preview link can open the page. Search engines are asked not to list it. ${site.status === 'live' ? '' : 'It is labeled an unofficial design preview.'} Buttons on that page do not call, text, or email until you turn enquiries on, and even then the only action is the enquiry form.</div>
+      <div class="notice">${site.status === 'draft' ? 'This draft is not public. Open preview works while you are signed in on this browser. Mark it Ready when anyone with the link may see the unofficial page.' : site.status === 'paused' ? 'The public link is off while this site is paused. You can still open it while signed in. Enquiries are off.' : site.status === 'live' ? 'This link is the live page. Search engines are asked not to list it. The form saves an enquiry only after you turn that on.' : 'Anyone with this link can open an unofficial design preview. It is not indexed, and it is not the business’s official website. Enquiries are off.'}</div>
       <div class="card"><label>Preview link</label><input class="input" readonly value="${h(previewHref(site.public_token))}">
         <div class="row mt"><a class="btn sm" target="_blank" rel="noopener" href="${h(previewHref(site.public_token))}">Open preview</a></div></div>
       <form id="siteForm" class="card">

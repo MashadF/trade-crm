@@ -102,11 +102,12 @@
       let data = null;
       if (check.mode === 'cloud' && check.ok) {
         if (typeof supabase === 'undefined') await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'vendor/supabase.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-        const client = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: false } });
+        const client = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
         data = await ST.getPublicSite(client, token);
+        if (!data) data = await ST.getMemberSite(client, token);
         if (data) data = L.publicSitePayload(data);
-      } else data = ST.readDemoPublicSite(token);
-      if (!data) { root.innerHTML = '<p class="banner">Unofficial design preview — not the business’s official website</p><p class="miss">This preview link is not active.</p>'; return; }
+      } else data = ST.readDemoPublicSite(token) || ST.readDemoMemberSite(token);
+      if (!data) { root.innerHTML = '<p class="miss">This page is not available.</p>'; return; }
       paint(data);
     } catch (e) {
       root.innerHTML = '<p class="banner">Unofficial design preview — not the business’s official website</p><p class="err">This preview could not be loaded.</p>';

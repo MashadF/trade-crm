@@ -364,6 +364,13 @@
     if (error) throw new Error(error.message);
     return data || null;
   }
+  async function getMemberSite(client, token) {
+    const session = await client.auth.getSession();
+    if (!session || !session.data || !session.data.session) return null;
+    const { data, error } = await client.rpc('get_member_site', { p_token: token });
+    if (error) return null;
+    return data || null;
+  }
   async function submitSiteEnquiry(client, args) {
     const { data, error } = await client.rpc('submit_site_enquiry', args || {});
     if (error) throw new Error(error.message || 'That did not go through.');
@@ -378,11 +385,21 @@
   function readDemoRaw(storage) {
     try { return JSON.parse((storage || localStorage).getItem(DEMO_KEY) || 'null'); } catch (e) { return null; }
   }
+  function demoSite(token, storage) {
+    const raw = readDemoRaw(storage); if (!raw) return null;
+    return (raw.client_sites || []).find(s => s.public_token === token) || null;
+  }
   function readDemoPublicSite(token, storage) {
     const L = previewLogic();
-    const raw = readDemoRaw(storage); if (!raw || !L) return null;
-    const site = (raw.client_sites || []).find(s => s.public_token === token);
-    return site ? L.publicSitePayload(site) : null;
+    const site = demoSite(token, storage);
+    if (!site || !L || !L.siteIsPublic(site.status)) return null;
+    return L.publicSitePayload(site);
+  }
+  function readDemoMemberSite(token, storage) {
+    const L = previewLogic();
+    const site = demoSite(token, storage);
+    if (!site || !L) return null;
+    return L.publicSitePayload(site);
   }
   async function submitDemoEnquiry(token, form, storage) {
     const ls = storage || (typeof localStorage !== 'undefined' ? localStorage : null);
@@ -416,5 +433,5 @@
     const s = DemoStore(opts); s.configError = check.ok ? '' : check.error; return s;
   }
 
-  return { TABLES, COLUMNS, pick, uuid, DemoStore, SupabaseStore, createStore, submitPublicLead, getPublicDocument, acceptPublicQuote, getPublicSite, submitSiteEnquiry, readDemoPublicSite, submitDemoEnquiry, DEMO_KEY, BUCKET };
+  return { TABLES, COLUMNS, pick, uuid, DemoStore, SupabaseStore, createStore, submitPublicLead, getPublicDocument, acceptPublicQuote, getPublicSite, getMemberSite, submitSiteEnquiry, readDemoPublicSite, readDemoMemberSite, submitDemoEnquiry, DEMO_KEY, BUCKET };
 });

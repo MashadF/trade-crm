@@ -633,6 +633,9 @@
       accent
     };
   }
+  function siteIsPublic(status) {
+    return status === 'ready' || status === 'shared' || status === 'live';
+  }
   function siteCollects(row) {
     return !!(row && row.status === 'live' && row.capture_enabled && row.approved_at);
   }
@@ -748,10 +751,14 @@
   function renderPublicSite(raw) {
     const s = publicSitePayload(raw);
     if (!s) return '<p class="miss">This preview link is not active.</p>';
-    const unofficial = s.status !== 'live';
-    const banner = unofficial
-      ? `<div class="banner">${esc(UNOFFICIAL_LABEL)}</div><p class="note">Anyone with this link can open this page. Search engines are asked not to list it.</p>`
-      : '<p class="note">Anyone with this link can open this page. Search engines are asked not to list it.</p>';
+    const shareNote = 'Anyone with this link can open this page. Search engines are asked not to list it.';
+    const banner = s.status === 'draft'
+      ? `<div class="banner">${esc(UNOFFICIAL_LABEL)}</div><p class="note">This draft is not a public page. It opens only for a signed-in manager.</p>`
+      : s.status === 'paused'
+        ? '<p class="note">The public link is off while this page is paused. It opens only for a signed-in manager.</p>'
+        : s.status === 'live'
+          ? `<p class="note">${shareNote}</p>`
+          : `<div class="banner">${esc(UNOFFICIAL_LABEL)}</div><p class="note">${shareNote}</p>`;
     const paused = s.status === 'paused' ? '<p class="paused">This page is paused. It is not collecting enquiries.</p>' : '';
     const services = (s.services || []).map(sv => `<li><strong>${esc(sv.name)}</strong>${sv.detail ? ` <span>${esc(sv.detail)}</span>` : ''}</li>`).join('');
     const facts = [
@@ -788,5 +795,5 @@
     gmailLink, emailLinks, emailHistory, emailDuplicate, replyState, contactedPatch,
     SERVICES_MAX, cleanService, cleanServices, serviceLine, addServiceToItems, searchServices, EXAMPLE_SERVICES, howAmIDoing,
     STOP_LINE, TEXT_TEMPLATES, textTemplate, buildText, hasStopLine, textCheck, suggestText,
-    UNOFFICIAL_LABEL, DAILY_SITE_AIM, SITE_STATUSES, cleanSiteServices, cleanSiteContent, siteCollects, publicSitePayload, applySitePatch, cleanProposal, buildSiteProposal, clientKeyForLead, workspaceRoleLabel, sitesStartedOn, cleanEnquirySource, cleanEnquiry, enquiryOpen, renderPublicSite };
+    UNOFFICIAL_LABEL, DAILY_SITE_AIM, SITE_STATUSES, cleanSiteServices, cleanSiteContent, siteIsPublic, siteCollects, publicSitePayload, applySitePatch, cleanProposal, buildSiteProposal, clientKeyForLead, workspaceRoleLabel, sitesStartedOn, cleanEnquirySource, cleanEnquiry, enquiryOpen, renderPublicSite };
 });
