@@ -22,7 +22,7 @@
     client_accounts: ['client_business_id', 'client_key', 'name_key', 'lead_id', 'setup_status'],
     client_sites: ['public_token', 'origin_key', 'status', 'capture_enabled', 'approved_at', 'template', 'accent', 'business_name', 'trade', 'phone', 'email', 'service_area', 'about', 'services', 'workspace_note', 'updated_at'],
     client_enquiries: ['client_site_id', 'name', 'phone', 'email', 'service', 'message', 'sms_ok', 'source', 'status'],
-    site_proposals: ['client_business_id', 'client_site_id', 'lead_id', 'client_key', 'to_email', 'email_confidence', 'email_note', 'subject', 'body', 'provenance', 'notes', 'status', 'sent_at', 'updated_at']
+    site_proposals: ['client_business_id', 'client_site_id', 'lead_id', 'client_key', 'to_email', 'email_confidence', 'email_note', 'subject', 'body', 'provenance', 'notes', 'status', 'sent_at', 'send_ready', 'preview_link_ready', 'updated_at']
   };
   const ORDER = { customers: 'name', leads: 'created_at', jobs: 'date', documents: 'created_at', tasks: 'due', review_requests: 'created_at', emails: 'created_at', client_accounts: 'created_at', client_sites: 'created_at', client_enquiries: 'created_at', site_proposals: 'created_at' };
   const pick = (table, obj) => { const o = {}; (COLUMNS[table] || []).forEach(k => { if (obj && obj[k] !== undefined) o[k] = obj[k]; }); return o; };
@@ -326,13 +326,18 @@
     };
     self.removePhoto = async path => { must(await client.storage.from(BUCKET).remove([path])); };
     self.exportAll = async () => { await self.loadAll(); return { exported_at: nowIso(), app: 'Trade CRM v2', mode: 'cloud', account: self.user && self.user.email, business: self.business, ...JSON.parse(JSON.stringify(self.state)) }; };
-    // Delete-my-data: photos first, then the business row (database cascades every table), then sign out.
+    // Delete-my-data removes the account this login owns. It does not delete a client
+    // workspace (those have no owner yet). Refuses instead of signing out if nothing was deleted.
     self.deleteAllData = async () => {
-      const b = bid();
+      const home = self.homeBusinessId();
+      const owned = (self.workspaces || []).find(w => w.id === home && w.role === 'owner' && (w.workspace_kind || 'own') !== 'client');
+      if (!owned) throw new Error('Only the owner of this account can delete it.');
+      if (!self.business || self.business.id !== home) throw new Error('Switch back to your own account before deleting it.');
       const paths = [];
       self.state.jobs.forEach(j => (j.photos || []).forEach(p => p.path && paths.push(p.path)));
       for (let i = 0; i < paths.length; i += 100) must(await client.storage.from(BUCKET).remove(paths.slice(i, i + 100)));
-      must(await client.from('businesses').delete().eq('id', b));
+      const deleted = must(await client.from('businesses').delete().eq('id', home).select('id'));
+      if (!deleted || !deleted.length) throw new Error('This account was not deleted.');
       try { ls.removeItem(cacheKey()); } catch (e) {}
       await self.signOut();
     };

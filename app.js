@@ -1118,7 +1118,7 @@
       <div class="field"><label>Sales notes (only in your account)</label><textarea class="input" name="notes" rows="2"></textarea></div>
       <div class="field"><label>Email subject</label><input class="input" name="subject" maxlength="500" value="${h(proposal.subject)}"></div>
       <div class="field"><label>Email draft</label><textarea class="input" name="body" rows="8">${h(proposal.body)}</textarea></div>
-      <p class="small muted">The CRM does not send this email. The draft has no preview link until you add the real one after the page is published. No price is included.</p>
+      <p class="small muted">The CRM does not send this email. No preview link is included unless you add the one from this screen. No price is included.</p>
       <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save draft workspace</button></div></form>`, m => {
       $('#f', m).onsubmit = async e => {
         e.preventDefault();
@@ -1174,7 +1174,7 @@
             ${proposal ? `<button class="btn sm" data-proposal="${h(proposal.id)}">Email draft</button>` : ''}
           </div></article>`;
       }).join('') : '<div class="card empty">No client sites yet. Start one from a sales lead, or add a blank draft.</div>'}
-      <p class="small muted">Preview links use this browser's address. They work on the public site after this version is published. This screen does not invent a web address.</p>`;
+      <p class="small muted">A preview link is the address of this app in the browser you have open. This screen does not invent a web address, and saving a draft does not publish one.</p>`;
     $('#newSite').onclick = () => openSiteDraft();
     $$('#siteSeg button').forEach(b => b.onclick = () => { siteFilter = b.dataset.sf; renderSites(); });
     $$('[data-open-ws]').forEach(b => b.onclick = async () => {
@@ -1273,7 +1273,6 @@
   }
   function openProposal(id) {
     const p = (S.site_proposals || []).find(x => x.id === id); if (!p) return;
-    const site = (store.listManagedSites ? null : null);
     openModal('Email draft', `<form id="f">
       ${p.email_confidence === 'medium' ? '<div class="notice warn">This address is only medium confidence, from an older listing. Check it before you send.</div>' : ''}
       <div class="field"><label>To</label><input class="input" id="pTo" name="to_email" type="email" value="${h(p.to_email || '')}"></div>
@@ -1308,9 +1307,9 @@
           const match = sites.find(s => s.id === p.client_site_id);
           token = match && match.public_token;
         } catch (e) { token = ''; }
-        if (!token) return toast('Save the site first so there is a real preview link.');
+        if (!token) return toast('There is no preview link on this draft yet.');
         const href = previewHref(token);
-        if (!body.value.includes(href)) body.value = body.value.replace('This draft does not include a preview link yet. A link can be added after the page is published.', 'Preview:\n' + href);
+        if (!body.value.includes(href)) body.value = body.value.trim() + '\n\nPreview:\n' + href;
         refresh();
       };
       $('#pSent', m).onclick = async () => {

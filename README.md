@@ -7,7 +7,7 @@ A phone-first CRM for 1–5 person trade shops (handyman, junk removal, pressure
 
 Status (Nov 8, 2026): the app in this repo is **version 2.9.0** (`VERSION` in `sw.js`). The copy on GitHub Pages is still the last published release until this version is deployed. Cloud mode uses Supabase project `bamwzxbowijasxggyjca` and only the public anon key. It is **not** hosted on Cloudflare. Leads found by the Rex and Webster bots are added by the daily lead sync (see "Daily lead sync" below and `import-log.md`). Some items under "What is NOT tested" below date from before go-live and have not been re-checked.
 
-**v2.9 is not applied to the live database yet.** `supabase/schema.sql` adds client workspaces and site previews in a section that can be run again. `supabase/client_workspaces_rollback.sql` turns public enquiry capture and the new functions off without deleting existing CRM rows. Do that only after a backup. Real prospect drafts are not stored in this app; they are a separate import for the account owner to review after the schema is applied.
+**v2.9 is not applied to the live database yet.** The database change is an operator migration. It is not in this published folder. Apply it only after a fresh backup. It does not send email, create a client login, or turn enquiry capture on. Client invitations are not part of this release.
 
 ## Files
 

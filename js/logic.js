@@ -675,28 +675,31 @@
       subject: clipText(input.subject, 500),
       body: clipText(input.body, 20000),
       provenance: clipText(input.provenance, 4000),
-      notes: clipText(input.notes, 5000)
+      notes: clipText(input.notes, 5000),
+      send_ready: false,
+      preview_link_ready: false
     };
   }
   function buildSiteProposal(opts) {
     opts = opts || {};
     const name = clipText(opts.businessName, 120) || 'the business';
-    const sender = clipText(opts.senderName, 120);
+    const signer = clipText(opts.signer || opts.senderName, 80);
     const subject = `Unofficial design preview for ${name}`;
     const body = [
       `Hello ${name} team,`,
       '',
-      `I put together an unofficial design preview for ${name}. It is not your official website. It uses only details already on file, such as the business name and the services listed with it. It does not include reviews, ratings, prices, or a guarantee.`,
+      `I drafted an unofficial design preview for ${name}. It is not your official website. It uses only the business name and the services already on file. It does not include reviews, ratings, prices, or a guarantee.`,
       '',
-      'The preview does not collect enquiries. Its buttons do not call, text, or email anyone.',
+      'That draft does not collect enquiries. Its buttons do not call, text, or email anyone.',
       '',
-      'This draft does not include a preview link yet. A link can be added after the page is published.',
+      'This is not a price quote, and I have not sent this message.',
       '',
-      'If you would like changes, reply to this email. The page stays a draft until you approve it. This email is not a price quote.',
-      '',
-      sender ? sender : 'Hi there,'
-    ].join('\n');
-    return { subject, body, outreach: true, to_email: '', email_confidence: 'unknown', email_note: '', provenance: '', notes: '' };
+      signer
+    ].filter((line, i, arr) => line !== '' || arr[i - 1] !== '').join('\n').replace(/\n$/, '');
+    return {
+      subject, body, outreach: true, to_email: '', email_confidence: 'unknown', email_note: '', provenance: '', notes: '',
+      send_ready: false, preview_link_ready: false
+    };
   }
   function clientKeyForLead(id) {
     const s = String(id || '').trim().toLowerCase();
